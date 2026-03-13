@@ -1,4 +1,5 @@
 import js from '@eslint/js'
+import prettierConfig from 'eslint-config-prettier'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
@@ -26,4 +27,5 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  prettierConfig,
 ])
