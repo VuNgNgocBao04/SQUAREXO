@@ -1,0 +1,19 @@
+{
+  "name": "squarexo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SquareXO – a 1v1 strategic Dots & Boxes / XO hybrid game",
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}
