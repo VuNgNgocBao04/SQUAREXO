@@ -1,0 +1,11 @@
+{
+  "name": "squarexo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test"
+  }
+}
