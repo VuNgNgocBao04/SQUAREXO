@@ -1,11 +1,11 @@
 /**
  * Socket.IO Event definitions and types
  * 
- * Note: GameState, Player, Edge types are re-defined here to avoid circular imports
- * Original definition in game-core/src/types/GameState.ts
+ * Note: GameState, Player, and Edge types are locally duplicated here to avoid circular imports.
+ * Original definitions live in game-core/src/types/GameState.ts.
  */
 
-// Re-exported types from game-core (for type safety + compatibility)
+// Local copies of game-core types (for compatibility; keep in sync manually)
 export type Player = "X" | "O";
 
 export interface Point {

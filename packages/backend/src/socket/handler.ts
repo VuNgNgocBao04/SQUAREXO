@@ -35,7 +35,7 @@ export function registerSocketHandlers(io: Server) {
      * Client vào phòng → assign X/O → sync state
      */
     socket.on(SocketEvents.JOIN_ROOM, async (payload: JoinRoomPayload) => {
-      const { roomId, rows = 3, cols = 3 } = payload;
+      const { roomId, rows = 3, cols = 3 } = payload ?? {};
 
       if (!roomId || typeof roomId !== 'string') {
         socket.emit(SocketEvents.ERROR, {
@@ -46,6 +46,12 @@ export function registerSocketHandlers(io: Server) {
       }
 
       try {
+        const previousRoomId = socketRooms.get(socket.id);
+        if (previousRoomId && previousRoomId !== roomId) {
+          roomStore.removePlayer(previousRoomId, socket.id);
+          socket.leave(previousRoomId);
+        }
+
         let room = roomStore.getRoom(roomId);
         if (!room) {
           const initialState = await createGameFromCore(rows, cols);
@@ -112,7 +118,7 @@ export function registerSocketHandlers(io: Server) {
      * Apply move từ game-core → update state → broadcast
      */
     socket.on(SocketEvents.MAKE_MOVE, async (payload: MakeMovePayload) => {
-      const { roomId, edge } = payload;
+      const { roomId, edge } = payload ?? {};
 
       if (!roomId || !edge) {
         socket.emit(SocketEvents.ERROR, {
@@ -180,7 +186,7 @@ export function registerSocketHandlers(io: Server) {
      * Re-initialize game state using game-core createGame
      */
     socket.on(SocketEvents.RESET_GAME, async (payload: ResetGamePayload) => {
-      const { roomId } = payload;
+      const { roomId } = payload ?? {};
 
       if (!roomId) {
         socket.emit(SocketEvents.ERROR, {

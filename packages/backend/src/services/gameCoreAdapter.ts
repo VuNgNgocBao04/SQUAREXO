@@ -9,8 +9,7 @@ let gameCoreModulePromise: Promise<GameCoreModule> | null = null;
 
 async function getGameCoreModule(): Promise<GameCoreModule> {
   if (!gameCoreModulePromise) {
-    const modulePath = '../../../game-core/dist/index.js';
-    gameCoreModulePromise = import(modulePath) as Promise<GameCoreModule>;
+    gameCoreModulePromise = import('game-core') as Promise<GameCoreModule>;
   }
   return gameCoreModulePromise;
 }
