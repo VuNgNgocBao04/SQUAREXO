@@ -1,7 +1,4 @@
-/**
- * Socket.IO Event definitions and types
- */
-
+// Game events
 export enum SocketEvents {
   JOIN_ROOM = 'join_room',
   MAKE_MOVE = 'make_move',
@@ -17,7 +14,7 @@ export interface JoinRoomPayload {
 
 export interface MakeMovePayload {
   roomId: string;
-  edge: string | number; // Edge move
+  edge: string; // hoặc number tùy game-core definition
 }
 
 export interface ResetGamePayload {
