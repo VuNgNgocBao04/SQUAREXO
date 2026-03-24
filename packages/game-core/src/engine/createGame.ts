@@ -1,4 +1,4 @@
-import type { Edge, GameState } from "../types/GameState";
+import type { Edge, GameState } from "../types/GameState.js";
 
 function assertBoardSize(rows: number, cols: number): void {
     if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows <= 0 || cols <= 0) {

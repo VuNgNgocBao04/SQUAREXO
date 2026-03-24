@@ -1,5 +1,5 @@
-export * from "./types/GameState";
+export * from "./types/GameState.js";
 
-export { createGame } from "./engine/createGame";
-export { applyMove } from "./engine/applyMove";
-export { isEdgeTaken } from "./engine/isEdgeTaken";
+export { createGame } from "./engine/createGame.js";
+export { applyMove } from "./engine/applyMove.js";
+export { isEdgeTaken } from "./engine/isEdgeTaken.js";
