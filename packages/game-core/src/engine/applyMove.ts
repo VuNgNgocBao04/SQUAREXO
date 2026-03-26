@@ -1,5 +1,5 @@
-import { edgeKey } from "./edgeKey";
-import type { Edge, GameState, Player } from "../types/GameState";
+import { edgeKey } from "./edgeKey.js";
+import type { Edge, GameState, Player } from "../types/GameState.js";
 
 function nextPlayer(player: Player): Player {
   return player === "X" ? "O" : "X";
