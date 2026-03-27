@@ -1,4 +1,4 @@
-import type { Edge, Point } from "../types/GameState";
+import type { Edge, Point } from "../types/GameState.js";
 
 function toOrderedPair(a: Point, b: Point): [Point, Point] {
   if (a.row < b.row) return [a, b];
