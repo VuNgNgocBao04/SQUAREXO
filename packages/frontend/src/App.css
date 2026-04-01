@@ -299,6 +299,113 @@ body {
   padding: 28px;
 }
 
+.backend-demo-card {
+  width: 100%;
+  max-width: 760px;
+  border-radius: 16px;
+  padding: 22px;
+  background: linear-gradient(145deg, rgba(8, 24, 43, 0.85), rgba(9, 15, 29, 0.9));
+  border: 1px solid var(--border);
+}
+
+.backend-demo-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+
+.backend-demo-subtitle {
+  color: var(--muted);
+  margin-top: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.backend-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.backend-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+
+.backend-field input {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(7, 19, 35, 0.6);
+  color: var(--text);
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.backend-status-row {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.backend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent2);
+  box-shadow: 0 0 8px var(--accent2);
+}
+
+.backend-dot.on {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.backend-actions {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backend-last-error {
+  margin-top: 12px;
+  border-left: 3px solid var(--accent2);
+  padding: 8px 10px;
+  background: rgba(217, 74, 130, 0.12);
+  font-size: 12px;
+}
+
+.backend-log-box {
+  margin-top: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.backend-log-line {
+  font-size: 12px;
+  font-family: 'Orbitron', monospace;
+  opacity: 0.95;
+}
+
+.backend-log-line + .backend-log-line {
+  margin-top: 6px;
+}
+
+.backend-log-line.muted {
+  color: var(--muted);
+}
+
 .config-title {
   font-family: 'Orbitron', monospace;
   font-size: 13px;
@@ -884,6 +991,12 @@ body {
   .h-tx,
   .h-result {
     text-align: left;
+  }
+}
+
+@media (max-width: 700px) {
+  .backend-grid {
+    grid-template-columns: 1fr;
   }
 }
 

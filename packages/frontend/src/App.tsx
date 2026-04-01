@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import BackendDemoPanel from './components/BackendDemoPanel'
 
 type Screen = 'home' | 'game' | 'history'
 type GameMode = 'pvp' | 'ai'
@@ -912,6 +913,8 @@ function App() {
             <button className="btn-ghost history-btn" onClick={showHistory}>
               📋 Xem Lịch Sử On-chain
             </button>
+
+            <BackendDemoPanel />
           </section>
         )}
 
