@@ -23,6 +23,10 @@ export function createBackendServer(env: AppEnv): BackendServer {
   });
 
   const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);
+  const roomSweepTimer = setInterval(() => {
+    roomManager.sweepExpired();
+  }, env.ROOM_SWEEP_INTERVAL_MS);
+  roomSweepTimer.unref();
 
   registerSocketHandlers(io, {
     roomManager,
@@ -36,6 +40,7 @@ export function createBackendServer(env: AppEnv): BackendServer {
     }
 
     closed = true;
+    clearInterval(roomSweepTimer);
     await io.close();
     await new Promise<void>((resolve, reject) => {
       httpServer.close((error) => {

@@ -61,6 +61,7 @@ describe("socket integration", () => {
     PUBLIC_BASE_URL: "http://localhost:0",
     RECONNECT_TIMEOUT_MS: 15000,
     DEDUPE_WINDOW_MS: 10000,
+    ROOM_SWEEP_INTERVAL_MS: 1000,
   };
 
   let baseUrl = "";
@@ -192,6 +193,81 @@ describe("socket integration", () => {
       expect(first.state.edges).toEqual(second.state.edges);
     } finally {
       client.disconnect();
+    }
+  });
+
+  it("rejects join_room when requested board size mismatches existing room", async () => {
+    const c1 = ioClient(baseUrl, { transports: ["websocket"] });
+    const c2 = ioClient(baseUrl, { transports: ["websocket"] });
+
+    try {
+      await Promise.all([waitConnected(c1), waitConnected(c2)]);
+
+      const roomInfoPromise = waitEvent<any>({
+        socket: c1,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_size_guard",
+      });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_size_guard", rows: 2, cols: 2, playerId: "p1" });
+      await roomInfoPromise;
+
+      const errorPromise = waitEvent<any>({ socket: c2, event: SocketEvents.ERROR });
+      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_size_guard", rows: 3, cols: 2, playerId: "p2" });
+      const error = await errorPromise;
+
+      expect(error.code).toBe("VALIDATION_ERROR");
+      expect(error.message).toContain("board size");
+    } finally {
+      c1.disconnect();
+      c2.disconnect();
+    }
+  });
+
+  it("releases previous room slot immediately when switching rooms", async () => {
+    const c1 = ioClient(baseUrl, { transports: ["websocket"] });
+    const c2 = ioClient(baseUrl, { transports: ["websocket"] });
+    const c3 = ioClient(baseUrl, { transports: ["websocket"] });
+
+    try {
+      await Promise.all([waitConnected(c1), waitConnected(c2), waitConnected(c3)]);
+
+      const oldInfo1 = waitEvent<any>({
+        socket: c1,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_old",
+      });
+      const oldInfo2 = waitEvent<any>({
+        socket: c2,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_old",
+      });
+
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2, playerId: "p1" });
+      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2, playerId: "p2" });
+
+      await Promise.all([oldInfo1, oldInfo2]);
+
+      const newRoomJoin = waitEvent<any>({
+        socket: c1,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_new",
+      });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_new", rows: 2, cols: 2, playerId: "p1" });
+      await newRoomJoin;
+
+      const reclaimed = waitEvent<any>({
+        socket: c3,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_old",
+      });
+      c3.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2, playerId: "p3" });
+      const reclaimedInfo = await reclaimed;
+
+      expect(reclaimedInfo.assignedPlayer).toBe("X");
+    } finally {
+      c1.disconnect();
+      c2.disconnect();
+      c3.disconnect();
     }
   });
 

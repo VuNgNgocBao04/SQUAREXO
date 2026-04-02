@@ -29,4 +29,28 @@ describe("RoomManager", () => {
     const assigned = manager.assignSocket(room, "s1b", "p1");
     expect(assigned).toBe("X");
   });
+
+  it("releases slot immediately when reserveForReconnect is false", () => {
+    const manager = new RoomManager(100000, 5000);
+    const room = manager.getOrCreateRoom("room_3", 3, 3, createTestGame());
+
+    expect(manager.assignSocket(room, "s1", "p1")).toBe("X");
+    manager.removeSocket("s1", { reserveForReconnect: false });
+
+    expect(room.players.X).toBeNull();
+    expect(room.pendingReconnect.size).toBe(0);
+  });
+
+  it("sweepExpired removes idle room after reconnect timeout", async () => {
+    const manager = new RoomManager(5, 5000);
+    const room = manager.getOrCreateRoom("room_4", 3, 3, createTestGame());
+
+    manager.assignSocket(room, "s1", "p1");
+    manager.removeSocket("s1");
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    manager.sweepExpired();
+
+    expect(manager.getRoom("room_4")).toBeUndefined();
+  });
 });

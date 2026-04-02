@@ -92,6 +92,22 @@ Use case:
 }
 ```
 
+### `player_joined`
+
+Payload is the same shape as `room_info`.
+
+Emitted when another socket joins the same room.
+
+### `room_cleaned`
+
+```json
+{
+  "roomId": "demo_room_1"
+}
+```
+
+Emitted when a room becomes empty and is removed.
+
 ### `error`
 
 ```json

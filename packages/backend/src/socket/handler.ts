@@ -84,12 +84,27 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         const existingRoomId = socketToRoom.get(socket.id);
         if (existingRoomId && existingRoomId !== payload.roomId) {
           socket.leave(existingRoomId);
-          options.roomManager.removeSocket(socket.id);
+          options.roomManager.removeSocket(socket.id, { reserveForReconnect: false });
         }
 
-        const initialState = await createGameFromCore(rows, cols);
-        const room = options.roomManager.getOrCreateRoom(payload.roomId, rows, cols, initialState);
+        const existingRoom = options.roomManager.getRoom(payload.roomId);
+        const room = existingRoom
+          ? existingRoom
+          : options.roomManager.getOrCreateRoom(payload.roomId, rows, cols, await createGameFromCore(rows, cols));
         options.roomManager.cleanupExpiredReconnect(room);
+
+        if (
+          (payload.rows !== undefined && payload.rows !== room.boardSize.rows) ||
+          (payload.cols !== undefined && payload.cols !== room.boardSize.cols)
+        ) {
+          throw new ContractError(ErrorCode.VALIDATION_ERROR, "Requested board size does not match existing room", {
+            expected: room.boardSize,
+            requested: {
+              rows: payload.rows,
+              cols: payload.cols,
+            },
+          });
+        }
 
         const assignedPlayer = options.roomManager.assignSocket(room, socket.id, playerId);
         socketToRoom.set(socket.id, room.roomId);

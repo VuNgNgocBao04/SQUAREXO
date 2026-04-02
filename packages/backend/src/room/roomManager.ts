@@ -25,6 +25,7 @@ export type Room = {
 
 export class RoomManager {
   private rooms = new Map<string, Room>();
+  private socketToRoomId = new Map<string, string>();
 
   constructor(
     private readonly reconnectTimeoutMs: number,
@@ -61,6 +62,7 @@ export class RoomManager {
 
   assignSocket(room: Room, socketId: string, requestedPlayerId: string): Player | null {
     room.socketToPlayerId.set(socketId, requestedPlayerId);
+    this.socketToRoomId.set(socketId, room.roomId);
 
     const recover = room.pendingReconnect.get(requestedPlayerId);
     if (recover && recover.expiresAt > Date.now()) {
@@ -107,33 +109,70 @@ export class RoomManager {
     return null;
   }
 
-  removeSocket(socketId: string): string | null {
+  removeSocket(
+    socketId: string,
+    options?: {
+      reserveForReconnect?: boolean;
+    },
+  ): string | null {
+    const reserveForReconnect = options?.reserveForReconnect ?? true;
+    const indexedRoomId = this.socketToRoomId.get(socketId);
+
+    if (indexedRoomId) {
+      const room = this.rooms.get(indexedRoomId);
+      if (room) {
+        return this.removeSocketFromRoom(room, socketId, reserveForReconnect);
+      }
+      this.socketToRoomId.delete(socketId);
+    }
+
     for (const room of this.rooms.values()) {
-      const playerId = room.socketToPlayerId.get(socketId);
-      if (!playerId) {
-        continue;
+      if (room.socketToPlayerId.has(socketId)) {
+        return this.removeSocketFromRoom(room, socketId, reserveForReconnect);
       }
-
-      room.socketToPlayerId.delete(socketId);
-      if (room.players.X === playerId) {
-        room.pendingReconnect.set(playerId, {
-          slot: "X",
-          expiresAt: Date.now() + this.reconnectTimeoutMs,
-        });
-      }
-
-      if (room.players.O === playerId) {
-        room.pendingReconnect.set(playerId, {
-          slot: "O",
-          expiresAt: Date.now() + this.reconnectTimeoutMs,
-        });
-      }
-
-      this.cleanupRoom(room.roomId);
-      return room.roomId;
     }
 
     return null;
+  }
+
+  private removeSocketFromRoom(room: Room, socketId: string, reserveForReconnect: boolean): string {
+    const playerId = room.socketToPlayerId.get(socketId);
+    if (!playerId) {
+      return room.roomId;
+    }
+
+    room.socketToPlayerId.delete(socketId);
+    this.socketToRoomId.delete(socketId);
+
+    const hasOtherConnection = [...room.socketToPlayerId.values()].some((id) => id === playerId);
+    if (!hasOtherConnection) {
+      if (reserveForReconnect) {
+        if (room.players.X === playerId) {
+          room.pendingReconnect.set(playerId, {
+            slot: "X",
+            expiresAt: Date.now() + this.reconnectTimeoutMs,
+          });
+        }
+
+        if (room.players.O === playerId) {
+          room.pendingReconnect.set(playerId, {
+            slot: "O",
+            expiresAt: Date.now() + this.reconnectTimeoutMs,
+          });
+        }
+      } else {
+        if (room.players.X === playerId) {
+          room.players.X = null;
+        }
+        if (room.players.O === playerId) {
+          room.players.O = null;
+        }
+        room.pendingReconnect.delete(playerId);
+      }
+    }
+
+    this.cleanupRoom(room.roomId);
+    return room.roomId;
   }
 
   cleanupExpiredReconnect(room: Room): void {
@@ -190,6 +229,12 @@ export class RoomManager {
 
     if (!hasConnectedSocket && !hasReservedSlot) {
       this.rooms.delete(roomId);
+    }
+  }
+
+  sweepExpired(): void {
+    for (const roomId of [...this.rooms.keys()]) {
+      this.cleanupRoom(roomId);
     }
   }
 

@@ -1,20 +1,4 @@
-export type Player = "X" | "O";
-
-export interface Point {
-  row: number;
-  col: number;
-}
-
-export interface Edge {
-  from: Point;
-  to: Point;
-  takenBy?: Player;
-}
-
-export interface GameState {
-  rows: number;
-  cols: number;
-  edges: Edge[];
-  currentPlayer: Player;
-  score: Record<Player, number>;
-}
+export type Player = import("game-core", { with: { "resolution-mode": "import" } }).Player;
+export type Point = import("game-core", { with: { "resolution-mode": "import" } }).Point;
+export type Edge = import("game-core", { with: { "resolution-mode": "import" } }).Edge;
+export type GameState = import("game-core", { with: { "resolution-mode": "import" } }).GameState;

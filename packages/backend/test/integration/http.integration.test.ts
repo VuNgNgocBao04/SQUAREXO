@@ -12,6 +12,7 @@ describe("http integration", () => {
     PUBLIC_BASE_URL: "http://localhost:0",
     RECONNECT_TIMEOUT_MS: 15000,
     DEDUPE_WINDOW_MS: 10000,
+    ROOM_SWEEP_INTERVAL_MS: 1000,
   };
 
   let server: ReturnType<typeof createBackendServer>;

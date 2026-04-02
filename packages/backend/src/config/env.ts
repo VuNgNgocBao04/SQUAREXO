@@ -7,6 +7,7 @@ const envSchema = z.object({
   PUBLIC_BASE_URL: z.string().url().optional(),
   RECONNECT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(30000),
   DEDUPE_WINDOW_MS: z.coerce.number().int().min(1000).max(300000).default(15000),
+  ROOM_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).max(300000).default(5000),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
