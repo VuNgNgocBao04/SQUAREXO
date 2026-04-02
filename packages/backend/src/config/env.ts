@@ -1,0 +1,16 @@
+import { z } from "zod";
+
+const envSchema = z.object({
+  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  CORS_ORIGIN: z.string().default("*"),
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PUBLIC_BASE_URL: z.string().url().optional(),
+  RECONNECT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(30000),
+  DEDUPE_WINDOW_MS: z.coerce.number().int().min(1000).max(300000).default(15000),
+});
+
+export type AppEnv = z.infer<typeof envSchema>;
+
+export function loadEnv(): AppEnv {
+  return envSchema.parse(process.env);
+}

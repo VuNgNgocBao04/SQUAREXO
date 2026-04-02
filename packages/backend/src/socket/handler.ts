@@ -1,269 +1,204 @@
-/**
- * Socket.IO Event Handlers with Game-Core Integration
- * 
- * Manages:
- * - Room state (players, game)
- * - Game moves (validate + apply game-core logic)
- * - Player tracking + assignments
- * - Real-time sync
- */
-
-import { Server, Socket } from 'socket.io';
-import { roomStore } from '../store/roomStore';
-import { createGameFromCore, applyMoveFromCore } from '../services/gameCoreAdapter';
+import type { Server, Socket } from "socket.io";
+import type { Player } from "../types/gameCore";
+import { logger } from "../config/logger";
+import { SocketEvents } from "../contracts/events";
+import { ContractError, ErrorCode, type ErrorPayload } from "../contracts/errors";
 import {
-  SocketEvents,
-  JoinRoomPayload,
-  MakeMovePayload,
-  ResetGamePayload,
-  GameStatePayload,
-  ErrorPayload,
-  PlayerJoinedPayload,
-  RoomInfoPayload,
-} from './events';
+  joinRoomSchema,
+  makeMoveSchema,
+  resetGameSchema,
+  syncStateSchema,
+} from "../contracts/schemas";
+import { metrics } from "../observability/metrics";
+import type { RoomManager } from "../room/roomManager";
+import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
+import { parsePayload } from "../utils/validation";
 
-// Track socket → room mapping for cleanup
-const socketRooms = new Map<string, string>();
-const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+type HandlerOptions = {
+  roomManager: RoomManager;
+  publicBaseUrl: string;
+};
 
-export function registerSocketHandlers(io: Server) {
-  io.on('connection', (socket: Socket) => {
-    console.log(`[Socket] Client connected: ${socket.id}`);
+function toContractError(error: unknown): ContractError {
+  if (error instanceof ContractError) {
+    return error;
+  }
 
-    /**
-     * Event: join_room
-     * Client vào phòng → assign X/O → sync state
-     */
-    socket.on(SocketEvents.JOIN_ROOM, async (payload: JoinRoomPayload) => {
-      const { roomId, rows = 3, cols = 3 } = payload ?? {};
+  if (error instanceof Error && error.message === "Edge already taken") {
+    return new ContractError(ErrorCode.EDGE_ALREADY_TAKEN, error.message);
+  }
 
-      if (!roomId || typeof roomId !== 'string') {
-        socket.emit(SocketEvents.ERROR, {
-          message: 'Invalid roomId',
-          code: 'INVALID_ROOM',
-        } as ErrorPayload);
-        return;
-      }
+  if (error instanceof Error && error.message === "Invalid edge for this board") {
+    return new ContractError(ErrorCode.INVALID_MOVE, error.message);
+  }
 
+  return new ContractError(ErrorCode.INTERNAL_ERROR, "Internal server error");
+}
+
+function emitError(socket: Socket, error: unknown): void {
+  const normalized = toContractError(error);
+  const payload: ErrorPayload = {
+    code: normalized.code,
+    message: normalized.message,
+    metadata: normalized.metadata,
+  };
+  socket.emit(SocketEvents.ERROR, payload);
+  metrics.incrementError();
+}
+
+function emitSnapshot(io: Server, roomId: string, state: Awaited<ReturnType<typeof createGameFromCore>>): void {
+  io.to(roomId).emit(SocketEvents.GAME_STATE, {
+    roomId,
+    state,
+    currentPlayer: state.currentPlayer,
+  });
+}
+
+function assertPlayerTurn(player: Player | null, currentPlayer: Player): void {
+  if (!player) {
+    throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to a player in this room");
+  }
+
+  if (player !== currentPlayer) {
+    throw new ContractError(ErrorCode.NOT_YOUR_TURN, "Not your turn", {
+      currentPlayer,
+      player,
+    });
+  }
+}
+
+export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
+  const socketToRoom = new Map<string, string>();
+
+  io.on("connection", (socket) => {
+    metrics.setActiveSockets(io.of("/").sockets.size);
+    logger.info("socket_connected", { socketId: socket.id });
+
+    socket.on(SocketEvents.JOIN_ROOM, async (rawPayload: unknown) => {
       try {
-        const previousRoomId = socketRooms.get(socket.id);
-        if (previousRoomId && previousRoomId !== roomId) {
-          roomStore.removePlayer(previousRoomId, socket.id);
-          socket.leave(previousRoomId);
+        const payload = parsePayload(joinRoomSchema, rawPayload);
+        const rows = payload.rows ?? 3;
+        const cols = payload.cols ?? 3;
+        const playerId = payload.playerId ?? `anon:${socket.id}`;
+
+        const existingRoomId = socketToRoom.get(socket.id);
+        if (existingRoomId && existingRoomId !== payload.roomId) {
+          socket.leave(existingRoomId);
+          options.roomManager.removeSocket(socket.id);
         }
 
-        let room = roomStore.getRoom(roomId);
-        if (!room) {
-          const initialState = await createGameFromCore(rows, cols);
-          room = roomStore.createRoom(roomId, initialState, rows, cols);
-        }
+        const initialState = await createGameFromCore(rows, cols);
+        const room = options.roomManager.getOrCreateRoom(payload.roomId, rows, cols, initialState);
+        options.roomManager.cleanupExpiredReconnect(room);
 
-        // Assign player (X or O)
-        const { player, isFull } = roomStore.assignPlayer(roomId, socket.id);
-        socketRooms.set(socket.id, roomId);
+        const assignedPlayer = options.roomManager.assignSocket(room, socket.id, playerId);
+        socketToRoom.set(socket.id, room.roomId);
+        socket.join(room.roomId);
 
-        // Socket join broadcasting room
-        socket.join(roomId);
-        console.log(
-          `[Socket] ${player ? `Player ${player}` : 'Spectator'} (${socket.id}) joined room ${roomId}`
-        );
-
-        // Send room info to joining player
-        const roomInfo: RoomInfoPayload = {
-          roomId,
-          playerX: room.playerX,
-          playerO: room.playerO,
-          assignedPlayer: player,
-          isFull,
-          boardSize: room.boardSize,
-          roomUrl: roomStore.getRoomUrl(roomId, publicBaseUrl),
-        };
-
+        const roomInfo = options.roomManager.getPublicRoomInfo(room, assignedPlayer, options.publicBaseUrl);
         socket.emit(SocketEvents.ROOM_INFO, roomInfo);
+        emitSnapshot(io, room.roomId, room.gameState);
+        socket.to(room.roomId).emit(SocketEvents.PLAYER_JOINED, roomInfo);
 
-        // Send current game state
-        const gameState: GameStatePayload = {
-          roomId,
-          state: room.gameState,
-          currentPlayer: room.gameState.currentPlayer,
-        };
-        socket.emit(SocketEvents.GAME_STATE, gameState);
+        metrics.setActiveRooms(options.roomManager.getRoomsCount());
+      } catch (error) {
+        emitError(socket, error);
+      }
+    });
 
-        // Notify others in room
-        socket.to(roomId).emit(SocketEvents.PLAYER_JOINED, {
-          player,
-          playerX: room.playerX,
-          playerO: room.playerO,
-          isFull,
-          roomUrl: roomStore.getRoomUrl(roomId, publicBaseUrl),
-        } as PlayerJoinedPayload);
-
-        // Notify all if room full
-        if (isFull) {
-          io.to(roomId).emit(SocketEvents.ROOM_FULL, {
-            message: 'Room is now full. Game can start!',
+    socket.on(SocketEvents.MAKE_MOVE, async (rawPayload: unknown) => {
+      const startedAt = Date.now();
+      try {
+        const payload = parsePayload(makeMoveSchema, rawPayload);
+        const room = options.roomManager.getRoom(payload.roomId);
+        if (!room) {
+          throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
+            roomId: payload.roomId,
           });
         }
+
+        const deduped = options.roomManager.getProcessedAction(room, payload.actionId);
+        if (deduped) {
+          emitSnapshot(io, payload.roomId, deduped.state);
+          return;
+        }
+
+        const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
+        assertPlayerTurn(assignedPlayer, room.gameState.currentPlayer);
+
+        const nextState = await applyMoveFromCore(room.gameState, payload.edge);
+        room.gameState = nextState;
+        options.roomManager.saveProcessedAction(room, payload.actionId, nextState);
+
+        emitSnapshot(io, payload.roomId, nextState);
+        metrics.observeMoveLatency(Date.now() - startedAt);
       } catch (error) {
-        console.error('[Socket] Error in join_room:', error);
-        socket.emit(SocketEvents.ERROR, {
-          message: error instanceof Error ? error.message : 'Failed to join room',
-          code: 'JOIN_FAILED',
-        } as ErrorPayload);
+        emitError(socket, error);
       }
     });
 
-    /**
-     * Event: make_move
-     * Apply move từ game-core → update state → broadcast
-     */
-    socket.on(SocketEvents.MAKE_MOVE, async (payload: MakeMovePayload) => {
-      const { roomId, edge } = payload ?? {};
-
-      if (!roomId || !edge) {
-        socket.emit(SocketEvents.ERROR, {
-          message: 'Invalid roomId or edge',
-          code: 'INVALID_MOVE_DATA',
-        } as ErrorPayload);
-        return;
-      }
-
+    socket.on(SocketEvents.RESET_GAME, async (rawPayload: unknown) => {
       try {
-        const room = roomStore.getRoom(roomId);
+        const payload = parsePayload(resetGameSchema, rawPayload);
+        const room = options.roomManager.getRoom(payload.roomId);
+
         if (!room) {
-          socket.emit(SocketEvents.ERROR, {
-            message: 'Room not found',
-            code: 'ROOM_NOT_FOUND',
-          } as ErrorPayload);
-          return;
+          throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
+            roomId: payload.roomId,
+          });
         }
 
-        // Validate: only current player can move
-        const playerAssignment = roomStore.getPlayerAssignment(roomId, socket.id);
-        if (!playerAssignment) {
-          socket.emit(SocketEvents.ERROR, {
-            message: 'You are not in this room',
-            code: 'NOT_IN_ROOM',
-          } as ErrorPayload);
-          return;
+        const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
+        if (!assignedPlayer) {
+          throw new ContractError(ErrorCode.RESET_FORBIDDEN, "Only player in room can reset game");
         }
 
-        if (room.gameState.currentPlayer !== playerAssignment) {
-          socket.emit(SocketEvents.ERROR, {
-            message: `It's not your turn. Current player: ${room.gameState.currentPlayer}`,
-            code: 'NOT_YOUR_TURN',
-          } as ErrorPayload);
-          return;
-        }
-
-        const updatedState = await applyMoveFromCore(room.gameState, edge);
-
-        // Update room state
-        roomStore.updateGameState(roomId, updatedState);
-
-        // Broadcast updated state to all in room
-        const gameState: GameStatePayload = {
-          roomId,
-          state: updatedState,
-          currentPlayer: updatedState.currentPlayer,
-        };
-        io.to(roomId).emit(SocketEvents.GAME_STATE, gameState);
-
-        console.log(
-          `[Socket] Move applied in room ${roomId}: ${playerAssignment} placed edge. Next: ${updatedState.currentPlayer}`
-        );
+        room.gameState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
+        emitSnapshot(io, payload.roomId, room.gameState);
       } catch (error) {
-        console.error('[Socket] Error in make_move:', error);
-        socket.emit(SocketEvents.ERROR, {
-          message: error instanceof Error ? error.message : 'Failed to apply move',
-          code: error instanceof Error && error.message.includes('Edge') ? 'INVALID_EDGE' : 'MOVE_FAILED',
-        } as ErrorPayload);
+        emitError(socket, error);
       }
     });
 
-    /**
-     * Event: reset_game
-     * Re-initialize game state using game-core createGame
-     */
-    socket.on(SocketEvents.RESET_GAME, async (payload: ResetGamePayload) => {
-      const { roomId } = payload ?? {};
+    socket.on(SocketEvents.SYNC_STATE, (rawPayload: unknown) => {
+      try {
+        const payload = parsePayload(syncStateSchema, rawPayload);
+        const room = options.roomManager.getRoom(payload.roomId);
+        if (!room) {
+          throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
+            roomId: payload.roomId,
+          });
+        }
+        socket.emit(SocketEvents.GAME_STATE, {
+          roomId: payload.roomId,
+          state: room.gameState,
+          currentPlayer: room.gameState.currentPlayer,
+        });
+      } catch (error) {
+        emitError(socket, error);
+      }
+    });
 
+    socket.on("disconnect", () => {
+      const roomId = options.roomManager.removeSocket(socket.id);
+      socketToRoom.delete(socket.id);
       if (!roomId) {
-        socket.emit(SocketEvents.ERROR, {
-          message: 'Invalid roomId',
-          code: 'INVALID_ROOM',
-        } as ErrorPayload);
         return;
       }
 
-      try {
-        const room = roomStore.getRoom(roomId);
-        if (!room) {
-          socket.emit(SocketEvents.ERROR, {
-            message: 'Room not found',
-            code: 'ROOM_NOT_FOUND',
-          } as ErrorPayload);
-          return;
-        }
-
-        const freshState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
-        roomStore.resetGame(roomId, freshState);
-
-        // Broadcast reset state to all in room
-        io.to(roomId).emit(SocketEvents.GAME_STATE, {
-          roomId,
-          state: freshState,
-          currentPlayer: freshState.currentPlayer,
-        } as GameStatePayload);
-
-        console.log(`[Socket] Game reset in room ${roomId}`);
-      } catch (error) {
-        console.error('[Socket] Error in reset_game:', error);
-        socket.emit(SocketEvents.ERROR, {
-          message: error instanceof Error ? error.message : 'Failed to reset game',
-          code: 'RESET_FAILED',
-        } as ErrorPayload);
-      }
-    });
-
-    /**
-     * Event: disconnect
-     * Clean up player from room + notify others
-     */
-    socket.on('disconnect', () => {
-      const roomId = socketRooms.get(socket.id);
-      
-      if (roomId) {
-        // Remove player from room
-        roomStore.removePlayer(roomId, socket.id);
-        
-        const room = roomStore.getRoom(roomId);
-        console.log(
-          `[Socket] Player disconnected from ${roomId}. Remaining: ${room ? 'X=' + room.playerX + ', O=' + room.playerO : 'room deleted'}`
+      const room = options.roomManager.getRoom(roomId);
+      if (!room) {
+        io.to(roomId).emit(SocketEvents.ROOM_CLEANED, { roomId });
+      } else {
+        io.to(roomId).emit(
+          SocketEvents.ROOM_INFO,
+          options.roomManager.getPublicRoomInfo(room, null, options.publicBaseUrl),
         );
-
-        // Notify remaining players
-        if (room) {
-          io.to(roomId).emit(SocketEvents.ROOM_INFO, {
-            roomId,
-            playerX: room.playerX,
-            playerO: room.playerO,
-            assignedPlayer: null,
-            isFull: roomStore.isRoomFull(roomId),
-            boardSize: room.boardSize,
-            roomUrl: roomStore.getRoomUrl(roomId, publicBaseUrl),
-          } as RoomInfoPayload);
-        }
       }
 
-      socketRooms.delete(socket.id);
-    });
-
-    /**
-     * Error handler
-     */
-    socket.on('error', (error) => {
-      console.error('[Socket] Socket error:', error);
+      metrics.setActiveRooms(options.roomManager.getRoomsCount());
+      metrics.setActiveSockets(io.of("/").sockets.size);
+      logger.info("socket_disconnected", { socketId: socket.id, roomId });
     });
   });
 }
