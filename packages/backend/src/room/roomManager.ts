@@ -10,17 +10,20 @@ type PendingReconnect = {
 type ProcessedAction = {
   actionId: string;
   state: GameState;
+  stateVersion: number;
   processedAt: number;
 };
 
 export type Room = {
   roomId: string;
   gameState: GameState;
+  stateVersion: number;
   boardSize: { rows: number; cols: number };
   players: Record<PlayerSlot, string | null>;
   socketToPlayerId: Map<string, string>;
   pendingReconnect: Map<string, PendingReconnect>;
   dedupe: Map<string, ProcessedAction>;
+  moveInProgress: Promise<void>;
 };
 
 export class RoomManager {
@@ -49,11 +52,13 @@ export class RoomManager {
     const room: Room = {
       roomId,
       gameState: initialState,
+      stateVersion: 0,
       boardSize: { rows, cols },
       players: { X: null, O: null },
       socketToPlayerId: new Map<string, string>(),
       pendingReconnect: new Map<string, PendingReconnect>(),
       dedupe: new Map<string, ProcessedAction>(),
+      moveInProgress: Promise.resolve(),
     };
 
     this.rooms.set(roomId, room);
@@ -199,10 +204,11 @@ export class RoomManager {
     }
   }
 
-  saveProcessedAction(room: Room, actionId: string, state: GameState): void {
+  saveProcessedAction(room: Room, actionId: string, state: GameState, stateVersion: number): void {
     room.dedupe.set(actionId, {
       actionId,
       state,
+      stateVersion,
       processedAt: Date.now(),
     });
   }

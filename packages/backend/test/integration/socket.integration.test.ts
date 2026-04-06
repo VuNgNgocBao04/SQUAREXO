@@ -196,6 +196,106 @@ describe("socket integration", () => {
     }
   });
 
+  it("rejects duplicate or out-of-order client sequence", async () => {
+    const client = ioClient(baseUrl, { transports: ["websocket"] });
+
+    try {
+      await waitConnected(client);
+
+      const roomInfoPromise = waitEvent<any>({
+        socket: client,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_sequence_guard",
+      });
+      client.emit(SocketEvents.JOIN_ROOM, {
+        roomId: "room_sequence_guard",
+        rows: 2,
+        cols: 2,
+        playerId: "p1",
+      });
+      await roomInfoPromise;
+
+      const firstStatePromise = waitEvent<any>({
+        socket: client,
+        event: SocketEvents.GAME_STATE,
+        predicate: (s) => s.roomId === "room_sequence_guard" && s.state.edges.some((e: any) => e.takenBy),
+      });
+      client.emit(SocketEvents.MAKE_MOVE, {
+        roomId: "room_sequence_guard",
+        actionId: "seq-1",
+        clientSequence: 1,
+        edge: { from: { row: 0, col: 0 }, to: { row: 0, col: 1 } },
+      });
+      await firstStatePromise;
+
+      const errorPromise = waitEvent<any>({ socket: client, event: SocketEvents.ERROR });
+      client.emit(SocketEvents.MAKE_MOVE, {
+        roomId: "room_sequence_guard",
+        actionId: "seq-2",
+        clientSequence: 1,
+        edge: { from: { row: 1, col: 0 }, to: { row: 1, col: 1 } },
+      });
+
+      const error = await errorPromise;
+      expect(error.code).toBe("VALIDATION_ERROR");
+      expect(error.message).toContain("out-of-order client sequence");
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  it("rate-limits rapid make_move events per socket", async () => {
+    const client = ioClient(baseUrl, { transports: ["websocket"] });
+
+    try {
+      await waitConnected(client);
+
+      const roomInfoPromise = waitEvent<any>({
+        socket: client,
+        event: SocketEvents.ROOM_INFO,
+        predicate: (payload) => payload.roomId === "room_rate_limit",
+      });
+      client.emit(SocketEvents.JOIN_ROOM, {
+        roomId: "room_rate_limit",
+        rows: 2,
+        cols: 2,
+        playerId: "p1",
+      });
+      await roomInfoPromise;
+
+      const thirdErrorPromise = waitEvent<any>({
+        socket: client,
+        event: SocketEvents.ERROR,
+        predicate: (payload) =>
+          payload.code === "VALIDATION_ERROR" &&
+          typeof payload.message === "string" &&
+          payload.message.includes("Too many moves"),
+      });
+
+      client.emit(SocketEvents.MAKE_MOVE, {
+        roomId: "room_rate_limit",
+        actionId: "rl-1",
+        edge: { from: { row: 0, col: 0 }, to: { row: 0, col: 1 } },
+      });
+      client.emit(SocketEvents.MAKE_MOVE, {
+        roomId: "room_rate_limit",
+        actionId: "rl-2",
+        edge: { from: { row: 1, col: 0 }, to: { row: 1, col: 1 } },
+      });
+      client.emit(SocketEvents.MAKE_MOVE, {
+        roomId: "room_rate_limit",
+        actionId: "rl-3",
+        edge: { from: { row: 0, col: 0 }, to: { row: 1, col: 0 } },
+      });
+
+      const error = await thirdErrorPromise;
+      expect(error.code).toBe("VALIDATION_ERROR");
+      expect(error.message).toContain("Too many moves");
+    } finally {
+      client.disconnect();
+    }
+  });
+
   it("rejects join_room when requested board size mismatches existing room", async () => {
     const c1 = ioClient(baseUrl, { transports: ["websocket"] });
     const c2 = ioClient(baseUrl, { transports: ["websocket"] });
