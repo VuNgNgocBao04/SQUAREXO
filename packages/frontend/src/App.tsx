@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
-type Screen = 'home' | 'game' | 'history' | 'room' | 'waiting'
+type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
 type GameMode = 'pvp' | 'ai'
 type LineType = 'h' | 'v'
 type ThemeMode = 'dark' | 'light'
+type AuthTab = 'login' | 'register'
+
+type User = {
+  id: string
+  username: string
+  email?: string
+  avatar?: string
+  joinedDate?: string
+}
 
 type Line = {
   type: LineType
@@ -69,7 +78,23 @@ function App() {
     return saved === 'light' ? 'light' : 'dark'
   })
 
-  const [screen, setScreen] = useState<Screen>('home')
+  // Auth state
+  const [authUser, setAuthUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem('dbAuthUser')
+      return saved ? (JSON.parse(saved) as User) : null
+    } catch {
+      return null
+    }
+  })
+  const [authTab, setAuthTab] = useState<AuthTab>('login')
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '', confirm: '' })
+  const [authError, setAuthError] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
+
+  const [screen, setScreen] = useState<Screen>(() => (authUser ? 'home' : 'auth'))
+  const [prevScreen, setPrevScreen] = useState<Exclude<Screen, 'settings'>>('home')
   const [gridSize, setGridSize] = useState(3)
   const [gameMode, setGameMode] = useState<GameMode>('pvp')
   const [stakeEth, setStakeEth] = useState(0.01)
@@ -660,6 +685,21 @@ function App() {
     setScreen('home')
   }, [clearTimers])
 
+  const openSettings = useCallback(() => {
+    if (screen !== 'settings') {
+      setPrevScreen(screen as Exclude<Screen, 'settings'>)
+    }
+    setScreen('settings')
+  }, [screen])
+
+  const closeSettings = useCallback(() => {
+    setScreen(prevScreen)
+  }, [prevScreen])
+
+  const openProfile = useCallback(() => {
+    setScreen('profile')
+  }, [])
+
   const showHistory = useCallback(() => {
     setScreen('history')
   }, [])
@@ -869,6 +909,77 @@ function App() {
     setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))
   }, [])
 
+  const handleLogin = useCallback(() => {
+    if (!loginForm.username || !loginForm.password) {
+      setAuthError('Vui lòng nhập đầy đủ thông tin')
+      return
+    }
+    setAuthError('')
+    setAuthLoading(true)
+
+    // Mock login
+    window.setTimeout(() => {
+      const user: User = {
+        id: `user_${Date.now()}`,
+        username: loginForm.username,
+        email: `${loginForm.username}@chain.io`,
+        avatar: '🎮',
+        joinedDate: '01/01/2025',
+      }
+      setAuthUser(user)
+      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      setLoginForm({ username: '', password: '' })
+      setScreen('home')
+      setAuthLoading(false)
+      showToast('Đăng nhập thành công!')
+    }, 800)
+  }, [loginForm, showToast])
+
+  const handleRegister = useCallback(() => {
+    if (!registerForm.username || !registerForm.email || !registerForm.password || !registerForm.confirm) {
+      setAuthError('Vui lòng nhập đầy đủ thông tin')
+      return
+    }
+    if (registerForm.password !== registerForm.confirm) {
+      setAuthError('Mật khẩu không trùng khớp')
+      return
+    }
+    if (registerForm.password.length < 6) {
+      setAuthError('Mật khẩu phải có ít nhất 6 ký tự')
+      return
+    }
+    setAuthError('')
+    setAuthLoading(true)
+
+    // Mock register
+    window.setTimeout(() => {
+      const user: User = {
+        id: `user_${Date.now()}`,
+        username: registerForm.username,
+        email: registerForm.email,
+        avatar: '🎮',
+        joinedDate: new Date().toLocaleDateString('vi-VN'),
+      }
+      setAuthUser(user)
+      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+      setScreen('home')
+      setAuthLoading(false)
+      showToast('Đăng ký thành công!')
+    }, 800)
+  }, [registerForm, showToast])
+
+  const handleLogout = useCallback(() => {
+    setAuthUser(null)
+    localStorage.removeItem('dbAuthUser')
+    setScreen('auth')
+    setAuthTab('login')
+    setLoginForm({ username: '', password: '' })
+    setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+    setAuthError('')
+    showToast('Đã đăng xuất')
+  }, [showToast])
+
   useEffect(() => {
     gridSizeRef.current = gridSize
     resizeCanvas()
@@ -921,14 +1032,15 @@ function App() {
         <div className="orb orb3" />
       </div>
 
-      {screen !== 'home' && (
-        <nav className="nav">
+      {screen !== 'home' && screen !== 'auth' && (
+        <nav className="nav-bar">
           <div className="nav-logo">D&amp;B // CHAIN</div>
           <div className="nav-links">
             <button className="btn-ghost" onClick={toggleTheme}>
               {themeMode === 'dark' ? '☀ Sáng' : '🌙 Tối'}
             </button>
-            <button className="btn-ghost" onClick={() => setScreen('room')}>Room</button>
+            <button className="btn-ghost" onClick={openProfile}>Hồ Sơ</button>
+            <button className="btn-ghost" onClick={openSettings}>Cài đặt</button>
             <button className="btn-ghost" onClick={goHome}>Home</button>
             <button className="btn-ghost" onClick={showHistory}>Lịch Sử</button>
           </div>
@@ -936,8 +1048,138 @@ function App() {
       )}
 
       <div className="wrap">
+        {screen === 'auth' && (
+          <section className="screen active" id="authScreen">
+            <div className="auth-card">
+              <div className="logo-wrap">
+                <div className="logo-title">DOTS &amp; BOXES</div>
+                <div className="logo-sub">BLOCKCHAIN EDITION</div>
+              </div>
+
+              <div className="auth-tabs">
+                <button
+                  className={`auth-tab ${authTab === 'login' ? 'active' : ''}`}
+                  onClick={() => { setAuthTab('login'); setAuthError('') }}
+                >
+                  ĐĂNG NHẬP
+                </button>
+                <button
+                  className={`auth-tab ${authTab === 'register' ? 'active' : ''}`}
+                  onClick={() => { setAuthTab('register'); setAuthError('') }}
+                >
+                  ĐĂNG KÝ
+                </button>
+              </div>
+
+              {authTab === 'login' && (
+                <div className="auth-form">
+                  <div className="form-group">
+                    <label>TÊN NGƯỜI DÙNG</label>
+                    <input
+                      type="text"
+                      placeholder="username"
+                      value={loginForm.username}
+                      onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>MẬT KHẨU</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={loginForm.password}
+                      onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                      disabled={authLoading}
+                      onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                    />
+                  </div>
+                  {authError && <div className="auth-error">{authError}</div>}
+                  <button
+                    className="btn-primary"
+                    onClick={handleLogin}
+                    disabled={authLoading}
+                  >
+                    {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG NHẬP'}
+                  </button>
+                  <div className="auth-demo">
+                    Demo: <span className="demo-link">demo / demo123</span>
+                  </div>
+                </div>
+              )}
+
+              {authTab === 'register' && (
+                <div className="auth-form">
+                  <div className="form-group">
+                    <label>TÊN NGƯỜI DÙNG</label>
+                    <input
+                      type="text"
+                      placeholder="username"
+                      value={registerForm.username}
+                      onChange={(e) => setRegisterForm({ ...registerForm, username: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>EMAIL</label>
+                    <input
+                      type="email"
+                      placeholder="email@example.com"
+                      value={registerForm.email}
+                      onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>MẬT KHẨU</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={registerForm.password}
+                      onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>XÁC NHÂN MẬT KHẨU</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={registerForm.confirm}
+                      onChange={(e) => setRegisterForm({ ...registerForm, confirm: e.target.value })}
+                      disabled={authLoading}
+                      onKeyPress={(e) => e.key === 'Enter' && handleRegister()}
+                    />
+                  </div>
+                  {authError && <div className="auth-error">{authError}</div>}
+                  <button
+                    className="btn-primary"
+                    onClick={handleRegister}
+                    disabled={authLoading}
+                  >
+                    {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG KÝ'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {screen === 'home' && (
-          <section className="screen" id="homeScreen">
+          <section className="screen active" id="homeScreen">
+            <div className="home-header">
+              <div className="user-profile">
+                <div className="user-avatar">{authUser?.avatar || '🎮'}</div>
+                <div className="user-info">
+                  <div className="user-name">{authUser?.username}</div>
+                  <div className="user-email">{authUser?.email}</div>
+                </div>
+                <button className="btn-profile" onClick={openProfile}>Hồ Sơ</button>
+                <button className="btn-logout" onClick={handleLogout} title="Đăng xuất">
+                  🚪
+                </button>
+              </div>
+            </div>
             <div className="logo-wrap">
               <div className="logo-title">DOTS &amp; BOXES</div>
               <div className="logo-sub">Blockchain Edition // Testnet</div>
@@ -1025,25 +1267,150 @@ function App() {
 
             <div className="room-btns">
               <button className="room-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
-              <button className="btn-ghost" style={{ flex: 1 }} onClick={showHistory}>📋 Lịch Sử</button>
-              <button className="btn-ghost" onClick={toggleTheme}>⚙</button>
+              <button className="btn-ghost home-history-btn" onClick={showHistory}>📋 Lịch Sử</button>
+              <button className="btn-ghost" onClick={openSettings}>⚙</button>
+            </div>
+          </section>
+        )}
+
+        {screen === 'settings' && (
+          <section className="screen settings-screen">
+            <div className="settings-modal">
+              <div className="settings-header">
+                <div className="settings-title">⚙ CÀI ĐẶT</div>
+                <button className="btn-ghost settings-close" onClick={closeSettings}>✕ Đóng</button>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-label">Giao Diện</div>
+                <div className="settings-item-row">
+                  <span>Chế độ tối</span>
+                  <button
+                    className={`theme-switch ${themeMode === 'dark' ? 'on' : ''}`}
+                    onClick={toggleTheme}
+                    aria-label="Bật tắt chế độ tối"
+                  >
+                    <span className="theme-switch-dot" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-label">Kích Thước Bảng</div>
+                <div className="settings-desc">Hiện tại: {gridSize}×{gridSize}</div>
+                <div className="size-btns">
+                  {[3, 4, 5, 6].map((size) => (
+                    <button
+                      key={size}
+                      className={`sz-btn ${gridSize === size ? 'on' : ''}`}
+                      onClick={() => setGridSize(size)}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-label">Chế Độ Chơi</div>
+                <div className="settings-desc">{gameMode === 'pvp' ? 'Người vs Người' : 'Người vs AI'}</div>
+                <div className="mode-btns">
+                  <button className={`md-btn ${gameMode === 'pvp' ? 'on' : ''}`} onClick={() => setGameMode('pvp')}>
+                    PvP
+                  </button>
+                  <button className={`md-btn ${gameMode === 'ai' ? 'on' : ''}`} onClick={() => setGameMode('ai')}>
+                    AI
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-nav-title">CHUYỂN MÀN HÌNH</div>
+              <div className="settings-nav-list">
+                <button className="settings-nav-btn" onClick={goHome}>🏠 Trang Chủ</button>
+                <button className="settings-nav-btn" onClick={openProfile}>👤 Trang Cá Nhân</button>
+                <button className="settings-nav-btn" onClick={() => setScreen('game')}>🎮 Ván Chơi</button>
+                <button className="settings-nav-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
+                <button className="settings-nav-btn" onClick={showHistory}>📋 Lịch Sử On-Chain</button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {screen === 'profile' && (
+          <section className="screen profile-screen">
+            <div className="profile-card">
+              <div className="profile-head">
+                <div className="profile-avatar">{authUser?.avatar || '🎮'}</div>
+                <div>
+                  <div className="profile-name">{authUser?.username || 'Người Chơi'}</div>
+                  <div className="profile-email">{authUser?.email || 'no-email@chain.io'}</div>
+                  <div className="profile-id">ID: {authUser?.id || 'guest'}</div>
+                </div>
+              </div>
+
+              <div className="profile-grid">
+                <div className="profile-stat">
+                  <div className="profile-stat-value">{gameHistory.length}</div>
+                  <div className="profile-stat-label">Ván Đã Chơi</div>
+                </div>
+                <div className="profile-stat">
+                  <div className="profile-stat-value">{winRate}%</div>
+                  <div className="profile-stat-label">Tỉ Lệ Thắng X</div>
+                </div>
+                <div className="profile-stat">
+                  <div className="profile-stat-value">{totalEth.toFixed(3)}</div>
+                  <div className="profile-stat-label">Tổng Stake ETH</div>
+                </div>
+              </div>
+
+              <div className="profile-wallet-card">
+                <div className="profile-wallet-title">⬡ Ví Blockchain</div>
+                <div className="profile-wallet-row">
+                  <span className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
+                  <span className="profile-wallet-address">{walletAddress}</span>
+                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected}>
+                    {walletConnected ? '✓ Đã kết nối' : 'Kết Nối'}
+                  </button>
+                </div>
+                <div className="profile-wallet-meta">
+                  {walletConnected ? (
+                    <>
+                      Số dư: <span className="balance-val">{walletBalance}</span> ETH · <span className="network-val">Sepolia</span>
+                    </>
+                  ) : (
+                    'Chưa kết nối ví'
+                  )}
+                </div>
+              </div>
+
+              <div className="profile-section">
+                <div className="profile-section-title">Thông Tin Tài Khoản</div>
+                <div className="profile-row"><span>Tham gia từ</span><strong>{authUser?.joinedDate || 'N/A'}</strong></div>
+                <div className="profile-row"><span>Chế độ ưa thích</span><strong>{gameMode === 'ai' ? 'Vs AI' : 'PvP Local'}</strong></div>
+                <div className="profile-row"><span>Kích thước bàn mặc định</span><strong>{gridSize}x{gridSize}</strong></div>
+                <div className="profile-row"><span>Theme</span><strong>{themeMode === 'dark' ? 'Dark Neon' : 'Light Neon'}</strong></div>
+              </div>
+
+              <div className="profile-actions">
+                <button className="btn-ghost" onClick={goHome}>🏠 Trang Chủ</button>
+                <button className="btn-ghost" onClick={openSettings}>⚙ Cài Đặt</button>
+                <button className="btn-primary" onClick={startGame}>⚡ Bắt Đầu Ngay</button>
+              </div>
             </div>
           </section>
         )}
 
         {screen === 'room' && (
           <section className="screen room-screen">
-            <div style={{ width: '100%', maxWidth: 480 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <div className="room-shell">
+              <div className="room-header-row">
                 <button className="btn-ghost" onClick={goHome}>← Quay lại</button>
-                <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 16, color: 'var(--accent)' }}>
-                  Phòng Chơi Online
-                </div>
+                <div className="room-header-title">Phòng Chơi Online</div>
               </div>
 
-              <div className="card" style={{ marginBottom: 0 }}>
+              <div className="card room-card">
                 <div className="card-title">🚪 Tạo Phòng Mới</div>
-                <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
+                <p className="room-desc">
                   Tạo phòng riêng và chia sẻ mã cho đối thủ để bắt đầu ván đấu.
                 </p>
                 <div className="row">
@@ -1070,18 +1437,18 @@ function App() {
                     <span className="stake-unit">ETH</span>
                   </div>
                 </div>
-                <button className="btn-primary" style={{ marginTop: 4 }} onClick={createRoom}>⚡ TẠO PHÒNG</button>
+                <button className="btn-primary room-create-btn" onClick={createRoom}>⚡ TẠO PHÒNG</button>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0', color: 'var(--muted)', fontSize: 12 }}>
-                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              <div className="room-divider-row">
+                <div className="room-divider-line" />
                 <span>HOẶC</span>
-                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <div className="room-divider-line" />
               </div>
 
-              <div className="card" style={{ marginBottom: 0 }}>
+              <div className="card room-card">
                 <div className="card-title">🔑 Vào Phòng</div>
-                <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
+                <p className="room-desc">
                   Nhập mã phòng 6 ký tự để tham gia ván đấu.
                 </p>
                 <div className="join-row">
@@ -1093,7 +1460,7 @@ function App() {
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
                   />
-                  <button className="btn-primary" style={{ width: 'auto', padding: '11px 20px' }} onClick={joinRoom}>
+                  <button className="btn-primary room-join-btn" onClick={joinRoom}>
                     Vào →
                   </button>
                 </div>
@@ -1104,9 +1471,7 @@ function App() {
 
         {screen === 'waiting' && (
           <section className="screen waiting-screen">
-            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 14, color: 'var(--accent)', letterSpacing: 3, textTransform: 'uppercase' }}>
-              Phòng Chờ
-            </div>
+            <div className="waiting-title">Phòng Chờ</div>
 
             <div className="room-code-box">
               <div className="code-label">Mã Phòng</div>
@@ -1215,17 +1580,17 @@ function App() {
               <button className="btn-ghost" onClick={goHome}>← Thoát</button>
               <button className="btn-ghost" onClick={undoMove} disabled={!gameActive}>↩ Hoàn Tác</button>
               <button className="forfeit-btn" onClick={confirmForfeit} disabled={!gameActive}>Bỏ Cuộc</button>
-              <button className="btn-ghost" onClick={() => setScreen('room')}>⚙ Cài đặt</button>
+              <button className="btn-ghost" onClick={openSettings}>⚙ Cài đặt</button>
             </div>
           </section>
         )}
 
         {screen === 'history' && (
           <section className="screen history-screen" id="historyScreen">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="history-top-row">
               <div>
                 <div className="h-title">⬡ Lịch Sử On-Chain</div>
-                <div style={{ fontSize: 11, letterSpacing: 2, color: 'var(--muted)', textTransform: 'uppercase', marginTop: 4 }}>
+                <div className="history-chain-sub">
                   Sepolia Testnet · Smart Contract 0x4a2f...c3e1
                 </div>
               </div>
@@ -1241,7 +1606,7 @@ function App() {
             <div className="h-list">
               {!gameHistory.length && (
                 <div className="empty-state">
-                  <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.4 }}>📭</div>
+                  <div className="empty-icon">📭</div>
                   <div>Chưa có ván nào được ghi on-chain</div>
                 </div>
               )}
@@ -1262,11 +1627,11 @@ function App() {
                       <div className="h-players">X vs {game.mode === 'ai' ? 'AI (O) 🤖' : 'O'} · {game.gridSize}×{game.gridSize}</div>
                       <div className="h-meta">{game.date} · {game.moves} nước đi</div>
                     </div>
-                    <div style={{ textAlign: 'center' }}>
+                    <div className="h-result-wrap">
                       <span className={`badge ${badgeClass}`}>{badgeText}</span>
-                      <div style={{ color: 'var(--muted)', fontSize: 11, marginTop: 4 }}>{game.scores[0]} - {game.scores[1]}</div>
+                      <div className="h-score-line">{game.scores[0]} - {game.scores[1]}</div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
+                    <div className="h-tx-wrap">
                       <div className="h-tx-hash">{game.tx.slice(0, 10)}...{game.tx.slice(-6)}</div>
                       <div className="h-amount">{game.stake > 0 ? `${game.stake.toFixed(3)} ETH` : 'Free'}</div>
                     </div>
