@@ -1,5 +1,5 @@
-import jwt, { type SignOptions } from "jsonwebtoken";
-import type { JwtPayload } from "../types/auth";
+import jwt, { type SignOptions, TokenExpiredError, JsonWebTokenError } from "jsonwebtoken";
+import type { JwtPayload, RefreshTokenPayload } from "../types/auth";
 import type { AppEnv } from "../config/env";
 
 /**
@@ -18,50 +18,80 @@ export class JwtTokenService {
   }
 
   /**
-   * Sign an access token
+   * Sign an access token with tokenType claim
    */
-  signAccessToken(payload: JwtPayload): string {
-    return jwt.sign(payload, this.secret, {
+  signAccessToken(payload: Omit<JwtPayload, 'tokenType'>): string {
+    const fullPayload: JwtPayload = {
+      ...payload,
+      tokenType: 'access',
+    };
+    return jwt.sign(fullPayload, this.secret, {
       expiresIn: this.expiresIn as any,
       algorithm: "HS256",
     });
   }
 
   /**
-   * Sign a refresh token
+   * Sign a refresh token with tokenType claim
    */
   signRefreshToken(userId: string): string {
-    return jwt.sign({ userId }, this.secret, {
+    const payload: RefreshTokenPayload = {
+      userId,
+      tokenType: 'refresh',
+    };
+    return jwt.sign(payload, this.secret, {
       expiresIn: this.refreshTokenExpiresIn as any,
       algorithm: "HS256",
     });
   }
 
   /**
-   * Verify an access token
+   * Verify an access token and validate tokenType
    */
-  verifyAccessToken(token: string): JwtPayload | null {
+  verifyAccessToken(token: string): { payload: JwtPayload | null; error?: string } {
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
-      });
-      return decoded as JwtPayload;
+      }) as any;
+      
+      // Validate tokenType
+      if (decoded.tokenType !== 'access') {
+        return { payload: null, error: 'INVALID_TOKEN' };
+      }
+      
+      return { payload: decoded as JwtPayload };
     } catch (error) {
-      return null;
+      if (error instanceof TokenExpiredError) {
+        return { payload: null, error: 'TOKEN_EXPIRED' };
+      } else if (error instanceof JsonWebTokenError) {
+        return { payload: null, error: 'INVALID_TOKEN' };
+      }
+      return { payload: null, error: 'INVALID_TOKEN' };
     }
   }
 
   /**
-   * Verify a refresh token
+   * Verify a refresh token and validate tokenType
    */
-  verifyRefreshToken(token: string): { userId: string } | null {
+  verifyRefreshToken(token: string): { payload: RefreshTokenPayload | null; error?: string } {
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
-      });
-      return decoded as { userId: string };
+      }) as any;
+      
+      // Validate tokenType
+      if (decoded.tokenType !== 'refresh') {
+        return { payload: null, error: 'INVALID_TOKEN' };
+      }
+      
+      return { payload: decoded as RefreshTokenPayload };
     } catch (error) {
-      return null;
+      if (error instanceof TokenExpiredError) {
+        return { payload: null, error: 'TOKEN_EXPIRED' };
+      } else if (error instanceof JsonWebTokenError) {
+        return { payload: null, error: 'INVALID_TOKEN' };
+      }
+      return { payload: null, error: 'INVALID_TOKEN' };
     }
   }
 

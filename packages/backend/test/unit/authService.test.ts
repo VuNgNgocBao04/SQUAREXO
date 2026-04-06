@@ -43,9 +43,10 @@ describe("JwtTokenService", () => {
       };
 
       const token = tokenService.signAccessToken(payload);
-      const verified = tokenService.verifyAccessToken(token);
+      const result = tokenService.verifyAccessToken(token);
 
-      expect(verified?.walletAddress).toBe("0x1234567890abcdef");
+      expect(result.error).toBeUndefined();
+      expect(result.payload?.walletAddress).toBe("0x1234567890abcdef");
     });
   });
 
@@ -59,26 +60,30 @@ describe("JwtTokenService", () => {
       };
 
       const token = tokenService.signAccessToken(payload);
-      const verified = tokenService.verifyAccessToken(token);
+      const result = tokenService.verifyAccessToken(token);
 
-      expect(verified).not.toBeNull();
-      expect(verified?.userId).toBe("user123");
-      expect(verified?.username).toBe("testuser");
-      expect(verified?.email).toBe("test@example.com");
-      expect(verified?.role).toBe("user");
+      expect(result.error).toBeUndefined();
+      expect(result.payload).not.toBeNull();
+      expect(result.payload?.userId).toBe("user123");
+      expect(result.payload?.username).toBe("testuser");
+      expect(result.payload?.email).toBe("test@example.com");
+      expect(result.payload?.role).toBe("user");
+      expect(result.payload?.tokenType).toBe("access");
     });
 
-    it("should return null for invalid token", () => {
-      const verified = tokenService.verifyAccessToken("invalid-token");
-      expect(verified).toBeNull();
+    it("should return error for invalid token", () => {
+      const result = tokenService.verifyAccessToken("invalid-token");
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
     });
 
-    it("should return null for malformed token", () => {
-      const verified = tokenService.verifyAccessToken("header.payload");
-      expect(verified).toBeNull();
+    it("should return error for malformed token", () => {
+      const result = tokenService.verifyAccessToken("header.payload");
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
     });
 
-    it("should return null for tampered token", () => {
+    it("should return error for tampered token", () => {
       const payload = {
         userId: "user123",
         username: "testuser",
@@ -88,9 +93,18 @@ describe("JwtTokenService", () => {
 
       const token = tokenService.signAccessToken(payload);
       const tamperedToken = token.substring(0, token.length - 5) + "xxxxx";
-      const verified = tokenService.verifyAccessToken(tamperedToken);
+      const result = tokenService.verifyAccessToken(tamperedToken);
 
-      expect(verified).toBeNull();
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
+    });
+
+    it("should reject refresh token when verifying as access token", () => {
+      const refreshToken = tokenService.signRefreshToken("user123");
+      const result = tokenService.verifyAccessToken(refreshToken);
+
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
     });
   });
 
@@ -106,15 +120,32 @@ describe("JwtTokenService", () => {
   describe("verifyRefreshToken", () => {
     it("should verify a valid refresh token", () => {
       const token = tokenService.signRefreshToken("user123");
-      const verified = tokenService.verifyRefreshToken(token);
+      const result = tokenService.verifyRefreshToken(token);
 
-      expect(verified).not.toBeNull();
-      expect(verified?.userId).toBe("user123");
+      expect(result.error).toBeUndefined();
+      expect(result.payload).not.toBeNull();
+      expect(result.payload?.userId).toBe("user123");
+      expect(result.payload?.tokenType).toBe("refresh");
     });
 
-    it("should return null for invalid refresh token", () => {
-      const verified = tokenService.verifyRefreshToken("invalid-token");
-      expect(verified).toBeNull();
+    it("should return error for invalid refresh token", () => {
+      const result = tokenService.verifyRefreshToken("invalid-token");
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
+    });
+
+    it("should reject access token when verifying as refresh token", () => {
+      const payload = {
+        userId: "user123",
+        username: "testuser",
+        email: "test@example.com",
+        role: "user",
+      };
+      const accessToken = tokenService.signAccessToken(payload);
+      const result = tokenService.verifyRefreshToken(accessToken);
+
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
     });
   });
 

@@ -44,7 +44,25 @@ describe("UserStore", () => {
         store.createUser(user2);
       }).toThrow("already exists");
     });
-  });
+
+    it("should throw error if user with same username exists", () => {
+      const user1 = createTestUser({
+        id: "user1",
+        username: "testuser",
+        email: "test1@example.com",
+      });
+      const user2 = createTestUser({
+        id: "user2",
+        username: "testuser",
+        email: "test2@example.com",
+      });
+
+      store.createUser(user1);
+
+      expect(() => {
+        store.createUser(user2);
+      }).toThrow("already exists");
+    });  });
 
   describe("findById", () => {
     it("should find user by id", () => {
@@ -130,10 +148,12 @@ describe("UserStore", () => {
     it("should clear all users", () => {
       const user1 = createTestUser({
         id: "user1",
+        username: "user1",
         email: "user1@example.com",
       });
       const user2 = createTestUser({
         id: "user2",
+        username: "user2",
         email: "user2@example.com",
       });
 

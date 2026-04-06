@@ -31,12 +31,10 @@ export function createApp(env: AppEnv): Express {
     res.status(200).json(metrics.snapshot());
   });
 
-  // Auth routes (public)
-  const authRoutes = createAuthRoutes(tokenService);
-  app.use("/api/auth", authRoutes);
-
-  // Protected routes middleware - can be applied to specific routes
+  // Auth routes (public except for /me which requires auth)
   const authMiddleware = createAuthMiddleware(tokenService);
+  const authRoutes = createAuthRoutes(tokenService, authMiddleware);
+  app.use("/api/auth", authRoutes);
   app.use("/api/protected", authMiddleware);
 
   // Export token service and auth middleware for use in server.ts

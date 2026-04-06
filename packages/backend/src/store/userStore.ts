@@ -7,6 +7,7 @@ import type { User } from "../types/auth";
 export class UserStore {
   private users: Map<string, User> = new Map();
   private usersByEmail: Map<string, string> = new Map();
+  private usersByUsername: Map<string, string> = new Map();
 
   /**
    * Create a new user
@@ -15,9 +16,13 @@ export class UserStore {
     if (this.usersByEmail.has(user.email)) {
       throw new Error(`User with email ${user.email} already exists`);
     }
+    if (this.usersByUsername.has(user.username.toLowerCase())) {
+      throw new Error(`User with username ${user.username} already exists`);
+    }
 
     this.users.set(user.id, user);
     this.usersByEmail.set(user.email, user.id);
+    this.usersByUsername.set(user.username.toLowerCase(), user.id);
     return user;
   }
 
@@ -66,6 +71,7 @@ export class UserStore {
   clear(): void {
     this.users.clear();
     this.usersByEmail.clear();
+    this.usersByUsername.clear();
   }
 }
 

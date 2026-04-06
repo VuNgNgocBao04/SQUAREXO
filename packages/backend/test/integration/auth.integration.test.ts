@@ -34,12 +34,14 @@ describe("Auth API Routes", () => {
     app = express();
     app.use(express.json());
 
-    // Mount auth routes
-    const authRoutes = createAuthRoutes(tokenService);
+    // Create auth middleware
+    const authMiddleware = createAuthMiddleware(tokenService);
+
+    // Mount auth routes with auth middleware
+    const authRoutes = createAuthRoutes(tokenService, authMiddleware);
     app.use("/api/auth", authRoutes);
 
-    // Mount protected route middleware
-    const authMiddleware = createAuthMiddleware(tokenService);
+    // Mount protected route middleware for testing
     app.get("/api/protected/me", authMiddleware, (req: any, res) => {
       if (!req.user) {
         return res.status(401).json({ error: "Unauthorized" });
@@ -333,6 +335,115 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(401);
       expect(res.body.code).toBe("MISSING_TOKEN");
+    });
+  });
+
+  describe("GET /api/auth/me - protected route with middleware", () => {
+    let accessToken: string;
+    let userId: string;
+
+    beforeEach(async () => {
+      // Create a test user and get access token
+      const res = await request(app).post("/api/auth/register").send({
+        username: "testuser",
+        email: "test@example.com",
+        password: "password123",
+      });
+      accessToken = res.body.accessToken;
+      userId = res.body.user.id;
+    });
+
+    it("should return current user info with valid access token", async () => {
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${accessToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        id: userId,
+        username: "testuser",
+        email: "test@example.com",
+        role: "user",
+        walletAddress: undefined,
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      });
+    });
+
+    it("should reject /api/auth/me without token", async () => {
+      const res = await request(app).get("/api/auth/me");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("MISSING_TOKEN");
+    });
+
+    it("should reject /api/auth/me with invalid token", async () => {
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", "Bearer invalid-token");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+  });
+
+  describe("Token type validation - Critical Security Tests", () => {
+    let accessToken: string;
+    let refreshToken: string;
+    let userId: string;
+
+    beforeEach(async () => {
+      // Register user to get tokens
+      const res = await request(app).post("/api/auth/register").send({
+        username: "testuser",
+        email: "test@example.com",
+        password: "password123",
+      });
+      accessToken = res.body.accessToken;
+      refreshToken = res.body.refreshToken;
+      userId = res.body.user.id;
+    });
+
+    it("should reject refresh token when used as access token in protected route", async () => {
+      // Try to use refresh token with bearer to access protected endpoint
+      const res = await request(app)
+        .get("/api/protected/me")
+        .set("Authorization", `Bearer ${refreshToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+
+    it("should reject access token when used as refresh token in refresh endpoint", async () => {
+      // Try to use access token as refresh token
+      const res = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: accessToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_REFRESH_TOKEN");
+    });
+
+    it("should reject /api/auth/me with refresh token", async () => {
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${refreshToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+
+    it("should reject refresh token from being used as access token in /api/auth/me", async () => {
+      // Additional validation test - refresh token should never be valid for access endpoints
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${refreshToken}`);
+
+      expect(res.status).toBe(401);
+      expect([
+        "INVALID_TOKEN",
+        "INVALID_TOKEN_TYPE",
+      ]).toContain(res.body.code);
     });
   });
 });

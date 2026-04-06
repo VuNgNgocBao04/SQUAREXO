@@ -30,11 +30,24 @@ export function createAuthMiddleware(tokenService: JwtTokenService) {
       });
     }
 
-    const payload = tokenService.verifyAccessToken(token);
+    const result = tokenService.verifyAccessToken(token);
 
+    if (result.error) {
+      const statusCode = result.error === 'TOKEN_EXPIRED' ? 401 : 401;
+      const errorMessage = result.error === 'TOKEN_EXPIRED' 
+        ? "Token has expired" 
+        : "Invalid or malformed token";
+      
+      return res.status(statusCode).json({
+        error: errorMessage,
+        code: result.error,
+      });
+    }
+
+    const payload = result.payload;
     if (!payload) {
       return res.status(401).json({
-        error: "Invalid or expired token",
+        error: "Invalid or malformed token",
         code: "INVALID_TOKEN",
       });
     }
@@ -62,8 +75,9 @@ export function createOptionalAuthMiddleware(tokenService: JwtTokenService) {
     const token = tokenService.extractTokenFromHeader(authHeader);
 
     if (token) {
-      const payload = tokenService.verifyAccessToken(token);
-      if (payload) {
+      const result = tokenService.verifyAccessToken(token);
+      if (!result.error && result.payload) {
+        const payload = result.payload;
         req.user = {
           userId: payload.userId,
           username: payload.username,

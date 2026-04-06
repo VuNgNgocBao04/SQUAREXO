@@ -1,4 +1,4 @@
-import { Router, type Response } from "express";
+import { Router, type Response, type RequestHandler, type NextFunction } from "express";
 import bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
 import { registerSchema, loginSchema, refreshTokenSchema } from "../contracts/schemas";
@@ -10,7 +10,7 @@ import type { User, AuthResponse } from "../types/auth";
 /**
  * Create auth routes
  */
-export function createAuthRoutes(tokenService: JwtTokenService) {
+export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?: RequestHandler) {
   const router = Router();
 
   /**
@@ -186,16 +186,17 @@ export function createAuthRoutes(tokenService: JwtTokenService) {
       const { refreshToken } = parsed.data;
 
       // Verify refresh token
-      const payload = tokenService.verifyRefreshToken(refreshToken);
-      if (!payload) {
+      const result = tokenService.verifyRefreshToken(refreshToken);
+      if (result.error || !result.payload) {
+        const code = result.error === 'TOKEN_EXPIRED' ? 'EXPIRED_REFRESH_TOKEN' : 'INVALID_REFRESH_TOKEN';
         return res.status(401).json({
           error: "Invalid or expired refresh token",
-          code: "INVALID_REFRESH_TOKEN",
+          code,
         });
       }
 
       // Get user
-      const user = userStore.findById(payload.userId);
+      const user = userStore.findById(result.payload.userId);
       if (!user) {
         return res.status(401).json({
           error: "User not found",
@@ -228,7 +229,19 @@ export function createAuthRoutes(tokenService: JwtTokenService) {
    * GET /auth/me
    * Get current user information (requires auth)
    */
-  router.get("/me", (req: AuthenticatedRequest, res: Response) => {
+  router.get(
+    "/me",
+    authMiddleware || ((req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      // Fallback middleware if not provided
+      if (!req.user) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          code: "UNAUTHORIZED",
+        });
+      }
+      next();
+    }),
+    (req: AuthenticatedRequest, res: Response) => {
     if (!req.user) {
       return res.status(401).json({
         error: "Unauthorized",
