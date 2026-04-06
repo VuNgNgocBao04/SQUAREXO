@@ -1,5 +1,16 @@
 import type { User } from "../types/auth";
 
+export type UserStoreErrorCode = "USER_EXISTS_EMAIL" | "USER_EXISTS_USERNAME";
+
+export class UserStoreError extends Error {
+  readonly code: UserStoreErrorCode;
+
+  constructor(code: UserStoreErrorCode, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 /**
  * In-memory user store
  * In production, this should be replaced with a database (MongoDB, PostgreSQL, etc.)
@@ -14,10 +25,10 @@ export class UserStore {
    */
   createUser(user: User): User {
     if (this.usersByEmail.has(user.email)) {
-      throw new Error(`User with email ${user.email} already exists`);
+      throw new UserStoreError("USER_EXISTS_EMAIL", `User with email ${user.email} already exists`);
     }
     if (this.usersByUsername.has(user.username.toLowerCase())) {
-      throw new Error(`User with username ${user.username} already exists`);
+      throw new UserStoreError("USER_EXISTS_USERNAME", `User with username ${user.username} already exists`);
     }
 
     this.users.set(user.id, user);

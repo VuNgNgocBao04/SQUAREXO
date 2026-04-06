@@ -16,11 +16,17 @@ export interface JwtPayload {
   role: string;
   walletAddress?: string;
   tokenType: 'access';
+  jti?: string;
+  iss?: string;
+  aud?: string | string[];
 }
 
 export interface RefreshTokenPayload {
   userId: string;
   tokenType: 'refresh';
+  jti?: string;
+  iss?: string;
+  aud?: string | string[];
 }
 
 export interface AuthResponse {

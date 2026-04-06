@@ -2,10 +2,15 @@ import { Router, type Response, type RequestHandler, type NextFunction } from "e
 import bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
 import { registerSchema, loginSchema, refreshTokenSchema } from "../contracts/schemas";
-import { userStore } from "../store/userStore";
+import { UserStoreError, userStore } from "../store/userStore";
 import type { JwtTokenService } from "../services/authService";
 import type { AuthenticatedRequest } from "./authMiddleware";
 import type { User, AuthResponse } from "../types/auth";
+
+function isDuplicateUserError(error: unknown): error is UserStoreError {
+  return error instanceof UserStoreError
+    && (error.code === "USER_EXISTS_EMAIL" || error.code === "USER_EXISTS_USERNAME");
+}
 
 /**
  * Create auth routes
@@ -55,7 +60,17 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
         updatedAt: new Date(),
       };
 
-      userStore.createUser(user);
+      try {
+        userStore.createUser(user);
+      } catch (error) {
+        if (isDuplicateUserError(error)) {
+          return res.status(409).json({
+            error: "User already exists",
+            code: "USER_EXISTS",
+          });
+        }
+        throw error;
+      }
 
       // Generate tokens
       const accessToken = tokenService.signAccessToken({
@@ -188,7 +203,11 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       // Verify refresh token
       const result = tokenService.verifyRefreshToken(refreshToken);
       if (result.error || !result.payload) {
-        const code = result.error === 'TOKEN_EXPIRED' ? 'EXPIRED_REFRESH_TOKEN' : 'INVALID_REFRESH_TOKEN';
+        const code = result.error === "TOKEN_EXPIRED"
+          ? "EXPIRED_REFRESH_TOKEN"
+          : result.error === "TOKEN_REVOKED"
+            ? "REVOKED_REFRESH_TOKEN"
+            : "INVALID_REFRESH_TOKEN";
         return res.status(401).json({
           error: "Invalid or expired refresh token",
           code,
@@ -213,8 +232,11 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
         walletAddress: user.walletAddress,
       });
 
+      const nextRefreshToken = tokenService.signRefreshToken(user.id, result.payload.jti);
+
       return res.status(200).json({
         accessToken,
+        refreshToken: nextRefreshToken,
       });
     } catch (error) {
       console.error("Refresh token error:", error);

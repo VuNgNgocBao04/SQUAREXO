@@ -13,6 +13,7 @@ import { metrics } from "../observability/metrics";
 import type { RoomManager } from "../room/roomManager";
 import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
 import { parsePayload } from "../utils/validation";
+import type { JwtPayload } from "../types/auth";
 
 type HandlerOptions = {
   roomManager: RoomManager;
@@ -100,6 +101,14 @@ function assertPlayerTurn(player: Player | null, currentPlayer: Player): void {
   }
 }
 
+function getSocketUser(socket: Socket): JwtPayload {
+  const user = (socket.data as { user?: JwtPayload }).user;
+  if (!user) {
+    throw new ContractError(ErrorCode.INTERNAL_ERROR, "Socket user context missing");
+  }
+  return user;
+}
+
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
   const socketToRoom = new Map<string, string>();
 
@@ -118,7 +127,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         const payload = parsePayload(joinRoomSchema, rawPayload);
         const rows = payload.rows ?? 3;
         const cols = payload.cols ?? 3;
-        const playerId = payload.playerId ?? `anon:${socket.id}`;
+        const playerId = getSocketUser(socket).userId;
 
         const existingRoomId = socketToRoom.get(socket.id);
         if (existingRoomId && existingRoomId !== payload.roomId) {

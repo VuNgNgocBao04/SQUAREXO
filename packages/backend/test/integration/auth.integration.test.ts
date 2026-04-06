@@ -17,6 +17,8 @@ describe("Auth API Routes", () => {
     CORS_ORIGIN: "*",
     NODE_ENV: "test",
     JWT_SECRET: "test-secret-key-that-is-long-enough-for-testing",
+    JWT_ISSUER: "squarexo-test-suite",
+    JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
     PUBLIC_BASE_URL: "http://localhost:3000",
@@ -201,6 +203,24 @@ describe("Auth API Routes", () => {
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("VALIDATION_ERROR");
     });
+
+    it("should return one success and one conflict under concurrent duplicate registration", async () => {
+      const payload = {
+        username: "race_user",
+        email: "race@example.com",
+        password: "password123",
+      };
+
+      const [r1, r2] = await Promise.all([
+        request(app).post("/api/auth/register").send(payload),
+        request(app).post("/api/auth/register").send(payload),
+      ]);
+
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toEqual([201, 409]);
+      expect([r1.body.code, r2.body.code]).toContain("USER_EXISTS");
+      expect([r1.body.code, r2.body.code]).not.toContain("INTERNAL_ERROR");
+    });
   });
 
   describe("POST /api/auth/login", () => {
@@ -284,6 +304,32 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("accessToken");
+      expect(res.body).toHaveProperty("refreshToken");
+      expect(res.body.refreshToken).not.toBe(refreshToken);
+    });
+
+    it("should revoke previous refresh token after rotation", async () => {
+      const firstRefresh = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(firstRefresh.status).toBe(200);
+      expect(firstRefresh.body).toHaveProperty("refreshToken");
+
+      const secondRefreshWithOldToken = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(secondRefreshWithOldToken.status).toBe(401);
+      expect(secondRefreshWithOldToken.body.code).toBe("REVOKED_REFRESH_TOKEN");
+
+      const secondRefreshWithNewToken = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: firstRefresh.body.refreshToken });
+
+      expect(secondRefreshWithNewToken.status).toBe(200);
+      expect(secondRefreshWithNewToken.body).toHaveProperty("accessToken");
+      expect(secondRefreshWithNewToken.body).toHaveProperty("refreshToken");
     });
 
     it("should reject invalid refresh token", async () => {
