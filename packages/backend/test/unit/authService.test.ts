@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import jwt from "jsonwebtoken";
 import { JwtTokenService } from "../../src/services/authService";
 import type { AppEnv } from "../../src/config/env";
 
@@ -106,6 +107,25 @@ describe("JwtTokenService", () => {
       expect(result.error).toBe("INVALID_TOKEN");
       expect(result.payload).toBeNull();
     });
+
+    it("should reject access token missing required claims", () => {
+      const malformedAccessToken = jwt.sign(
+        {
+          userId: "user123",
+          tokenType: "access",
+        },
+        mockEnv.JWT_SECRET,
+        {
+          expiresIn: "7d",
+          algorithm: "HS256",
+        },
+      );
+
+      const result = tokenService.verifyAccessToken(malformedAccessToken);
+
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
+    });
   });
 
   describe("signRefreshToken", () => {
@@ -143,6 +163,24 @@ describe("JwtTokenService", () => {
       };
       const accessToken = tokenService.signAccessToken(payload);
       const result = tokenService.verifyRefreshToken(accessToken);
+
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
+    });
+
+    it("should reject refresh token payload missing userId", () => {
+      const malformedRefreshToken = jwt.sign(
+        {
+          tokenType: "refresh",
+        },
+        mockEnv.JWT_SECRET,
+        {
+          expiresIn: "30d",
+          algorithm: "HS256",
+        },
+      );
+
+      const result = tokenService.verifyRefreshToken(malformedRefreshToken);
 
       expect(result.error).toBe("INVALID_TOKEN");
       expect(result.payload).toBeNull();

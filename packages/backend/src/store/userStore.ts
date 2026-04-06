@@ -46,12 +46,9 @@ export class UserStore {
    * Find user by username
    */
   findByUsername(username: string): User | undefined {
-    for (const user of this.users.values()) {
-      if (user.username === username) {
-        return user;
-      }
-    }
-    return undefined;
+    const userId = this.usersByUsername.get(username.toLowerCase());
+    if (!userId) return undefined;
+    return this.users.get(userId);
   }
 
   /**

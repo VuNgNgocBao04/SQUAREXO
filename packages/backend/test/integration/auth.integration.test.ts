@@ -134,6 +134,25 @@ describe("Auth API Routes", () => {
       expect(res.body.code).toBe("USER_EXISTS");
     });
 
+    it("should reject duplicate username with different casing", async () => {
+      await request(app).post("/api/auth/register").send({
+        username: "TestUser",
+        email: "test1@example.com",
+        password: "password123",
+      });
+
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: "testuser",
+          email: "test2@example.com",
+          password: "password123",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("USER_EXISTS");
+    });
+
     it("should validate required fields", async () => {
       const res = await request(app).post("/api/auth/register").send({
         username: "testuser",
@@ -390,8 +409,6 @@ describe("Auth API Routes", () => {
   describe("Token type validation - Critical Security Tests", () => {
     let accessToken: string;
     let refreshToken: string;
-    let userId: string;
-
     beforeEach(async () => {
       // Register user to get tokens
       const res = await request(app).post("/api/auth/register").send({
@@ -401,7 +418,6 @@ describe("Auth API Routes", () => {
       });
       accessToken = res.body.accessToken;
       refreshToken = res.body.refreshToken;
-      userId = res.body.user.id;
     });
 
     it("should reject refresh token when used as access token in protected route", async () => {
@@ -431,19 +447,6 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(401);
       expect(res.body.code).toBe("INVALID_TOKEN");
-    });
-
-    it("should reject refresh token from being used as access token in /api/auth/me", async () => {
-      // Additional validation test - refresh token should never be valid for access endpoints
-      const res = await request(app)
-        .get("/api/auth/me")
-        .set("Authorization", `Bearer ${refreshToken}`);
-
-      expect(res.status).toBe(401);
-      expect([
-        "INVALID_TOKEN",
-        "INVALID_TOKEN_TYPE",
-      ]).toContain(res.body.code);
     });
   });
 });

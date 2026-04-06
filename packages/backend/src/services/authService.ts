@@ -1,6 +1,21 @@
 import jwt, { type SignOptions, TokenExpiredError, JsonWebTokenError } from "jsonwebtoken";
+import { z } from "zod";
 import type { JwtPayload, RefreshTokenPayload } from "../types/auth";
 import type { AppEnv } from "../config/env";
+
+const accessPayloadSchema = z.object({
+  userId: z.string().min(1),
+  username: z.string().min(1),
+  email: z.string().email(),
+  role: z.string().min(1),
+  walletAddress: z.string().optional(),
+  tokenType: z.literal("access"),
+});
+
+const refreshPayloadSchema = z.object({
+  userId: z.string().min(1),
+  tokenType: z.literal("refresh"),
+});
 
 /**
  * JWT Token Service
@@ -52,14 +67,14 @@ export class JwtTokenService {
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
-      }) as any;
-      
-      // Validate tokenType
-      if (decoded.tokenType !== 'access') {
+      });
+
+      const parsed = accessPayloadSchema.safeParse(decoded);
+      if (!parsed.success) {
         return { payload: null, error: 'INVALID_TOKEN' };
       }
-      
-      return { payload: decoded as JwtPayload };
+
+      return { payload: parsed.data };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
         return { payload: null, error: 'TOKEN_EXPIRED' };
@@ -77,14 +92,14 @@ export class JwtTokenService {
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
-      }) as any;
-      
-      // Validate tokenType
-      if (decoded.tokenType !== 'refresh') {
+      });
+
+      const parsed = refreshPayloadSchema.safeParse(decoded);
+      if (!parsed.success) {
         return { payload: null, error: 'INVALID_TOKEN' };
       }
-      
-      return { payload: decoded as RefreshTokenPayload };
+
+      return { payload: parsed.data };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
         return { payload: null, error: 'TOKEN_EXPIRED' };
