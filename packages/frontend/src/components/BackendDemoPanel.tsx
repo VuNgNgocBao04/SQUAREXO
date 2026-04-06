@@ -36,6 +36,7 @@ function trimLogs(lines: LogLine[]): LogLine[] {
 
 export default function BackendDemoPanel() {
   const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL);
+  const [accessToken, setAccessToken] = useState('');
   const [roomId, setRoomId] = useState('demo_room_1');
   const [rows, setRows] = useState(3);
   const [cols, setCols] = useState(3);
@@ -62,6 +63,9 @@ export default function BackendDemoPanel() {
     const socket = io(backendUrl, {
       transports: ['websocket'],
       timeout: 5000,
+      auth: {
+        token: accessToken,
+      },
     });
 
     socket.on('connect', () => {
@@ -74,6 +78,13 @@ export default function BackendDemoPanel() {
       setAssignedPlayer(null);
       setCurrentTurn(null);
       addLog('Disconnected');
+    });
+
+    socket.on('connect_error', (error) => {
+      const message = error?.message || 'connect_error';
+      setConnected(false);
+      setLastError(message);
+      addLog(`Connect error: ${message}`);
     });
 
     socket.on('room_info', (payload: RoomInfoPayload) => {
@@ -95,7 +106,7 @@ export default function BackendDemoPanel() {
     });
 
     socketRef.current = socket;
-  }, [addLog, backendUrl]);
+  }, [accessToken, addLog, backendUrl]);
 
   const disconnect = useCallback(() => {
     socketRef.current?.disconnect();
@@ -175,6 +186,16 @@ export default function BackendDemoPanel() {
         <label className="backend-field">
           Backend URL
           <input value={backendUrl} onChange={(event) => setBackendUrl(event.target.value)} />
+        </label>
+
+        <label className="backend-field">
+          Access Token
+          <input
+            type="password"
+            placeholder="Paste JWT access token"
+            value={accessToken}
+            onChange={(event) => setAccessToken(event.target.value)}
+          />
         </label>
 
         <label className="backend-field">

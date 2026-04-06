@@ -13,11 +13,45 @@ import { metrics } from "../observability/metrics";
 import type { RoomManager } from "../room/roomManager";
 import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
 import { parsePayload } from "../utils/validation";
+import type { JwtPayload } from "../types/auth";
 
 type HandlerOptions = {
   roomManager: RoomManager;
   publicBaseUrl: string;
 };
+
+type SocketContext = {
+  lastMoveTime: number;
+  moveCount: number;
+  clientSequence: number;
+};
+
+const socketContextMap = new Map<string, SocketContext>();
+
+function checkRateLimit(socketId: string): void {
+  const now = Date.now();
+  const ctx = socketContextMap.get(socketId);
+
+  if (!ctx) {
+    socketContextMap.set(socketId, {
+      lastMoveTime: now,
+      moveCount: 1,
+      clientSequence: -1,
+    });
+    return;
+  }
+
+  if (now - ctx.lastMoveTime > 1000) {
+    ctx.lastMoveTime = now;
+    ctx.moveCount = 1;
+    return;
+  }
+
+  ctx.moveCount += 1;
+  if (ctx.moveCount > 2) {
+    throw new ContractError(ErrorCode.VALIDATION_ERROR, "Too many moves, maximum 2 per second");
+  }
+}
 
 function toContractError(error: unknown): ContractError {
   if (error instanceof ContractError) {
@@ -67,10 +101,24 @@ function assertPlayerTurn(player: Player | null, currentPlayer: Player): void {
   }
 }
 
+function getSocketUser(socket: Socket): JwtPayload {
+  const user = (socket.data as { user?: JwtPayload }).user;
+  if (!user) {
+    throw new ContractError(ErrorCode.INTERNAL_ERROR, "Socket user context missing");
+  }
+  return user;
+}
+
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
   const socketToRoom = new Map<string, string>();
 
   io.on("connection", (socket) => {
+    socketContextMap.set(socket.id, {
+      lastMoveTime: 0,
+      moveCount: 0,
+      clientSequence: -1,
+    });
+
     metrics.setActiveSockets(io.of("/").sockets.size);
     logger.info("socket_connected", { socketId: socket.id });
 
@@ -79,7 +127,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         const payload = parsePayload(joinRoomSchema, rawPayload);
         const rows = payload.rows ?? 3;
         const cols = payload.cols ?? 3;
-        const playerId = payload.playerId ?? `anon:${socket.id}`;
+        const playerId = getSocketUser(socket).userId;
 
         const existingRoomId = socketToRoom.get(socket.id);
         if (existingRoomId && existingRoomId !== payload.roomId) {
@@ -132,21 +180,48 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           });
         }
 
-        const deduped = options.roomManager.getProcessedAction(room, payload.actionId);
-        if (deduped) {
-          emitSnapshot(io, payload.roomId, deduped.state);
-          return;
+        checkRateLimit(socket.id);
+
+        const ctx = socketContextMap.get(socket.id);
+        if (ctx && payload.clientSequence !== undefined) {
+          if (payload.clientSequence <= ctx.clientSequence) {
+            throw new ContractError(
+              ErrorCode.VALIDATION_ERROR,
+              "Duplicate or out-of-order client sequence",
+            );
+          }
+          ctx.clientSequence = payload.clientSequence;
         }
 
-        const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
-        assertPlayerTurn(assignedPlayer, room.gameState.currentPlayer);
+        const runMove = async (): Promise<void> => {
+          if (!room.socketToPlayerId.has(socket.id)) {
+            throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket disconnected during move processing");
+          }
 
-        const nextState = await applyMoveFromCore(room.gameState, payload.edge);
-        room.gameState = nextState;
-        options.roomManager.saveProcessedAction(room, payload.actionId, nextState);
+          const deduped = options.roomManager.getProcessedAction(room, payload.actionId);
+          if (deduped) {
+            if (deduped.stateVersion === room.stateVersion) {
+              emitSnapshot(io, payload.roomId, deduped.state);
+            } else {
+              emitSnapshot(io, payload.roomId, room.gameState);
+            }
+            return;
+          }
 
-        emitSnapshot(io, payload.roomId, nextState);
-        metrics.observeMoveLatency(Date.now() - startedAt);
+          const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
+          assertPlayerTurn(assignedPlayer, room.gameState.currentPlayer);
+
+          const nextState = await applyMoveFromCore(room.gameState, payload.edge);
+          room.gameState = nextState;
+          room.stateVersion += 1;
+          options.roomManager.saveProcessedAction(room, payload.actionId, nextState, room.stateVersion);
+
+          emitSnapshot(io, payload.roomId, nextState);
+          metrics.observeMoveLatency(Date.now() - startedAt);
+        };
+
+        room.moveInProgress = room.moveInProgress.catch(() => undefined).then(runMove);
+        await room.moveInProgress;
       } catch (error) {
         emitError(socket, error);
       }
@@ -163,13 +238,23 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           });
         }
 
-        const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
-        if (!assignedPlayer) {
-          throw new ContractError(ErrorCode.RESET_FORBIDDEN, "Only player in room can reset game");
-        }
+        const runReset = async (): Promise<void> => {
+          if (!room.socketToPlayerId.has(socket.id)) {
+            throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket disconnected during reset");
+          }
 
-        room.gameState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
-        emitSnapshot(io, payload.roomId, room.gameState);
+          const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
+          if (!assignedPlayer) {
+            throw new ContractError(ErrorCode.RESET_FORBIDDEN, "Only player in room can reset game");
+          }
+
+          room.gameState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
+          room.stateVersion += 1;
+          emitSnapshot(io, payload.roomId, room.gameState);
+        };
+
+        room.moveInProgress = room.moveInProgress.catch(() => undefined).then(runReset);
+        await room.moveInProgress;
       } catch (error) {
         emitError(socket, error);
       }
@@ -197,6 +282,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
     socket.on("disconnect", () => {
       const roomId = options.roomManager.removeSocket(socket.id);
       socketToRoom.delete(socket.id);
+      socketContextMap.delete(socket.id);
       if (!roomId) {
         return;
       }
