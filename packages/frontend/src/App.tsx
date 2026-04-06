@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
-import BackendDemoPanel from './components/BackendDemoPanel'
 
-type Screen = 'home' | 'game' | 'history'
+type Screen = 'home' | 'game' | 'history' | 'room' | 'waiting'
 type GameMode = 'pvp' | 'ai'
 type LineType = 'h' | 'v'
 type ThemeMode = 'dark' | 'light'
@@ -30,6 +29,12 @@ type HistoryRecord = {
   moves: number
 }
 
+type RoomMessage = {
+  id: number
+  user: string
+  msg: string
+}
+
 const DOT = 18
 const PAD = 32
 const SNAP = 20
@@ -53,6 +58,11 @@ function genTxHash() {
   )
 }
 
+function genRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+}
+
 function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem('dbTheme')
@@ -63,6 +73,14 @@ function App() {
   const [gridSize, setGridSize] = useState(3)
   const [gameMode, setGameMode] = useState<GameMode>('pvp')
   const [stakeEth, setStakeEth] = useState(0.01)
+  const [roomCode, setRoomCode] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+  const [roomPlayers, setRoomPlayers] = useState(1)
+  const [roomCountdown, setRoomCountdown] = useState<number | null>(null)
+  const [roomChat, setRoomChat] = useState<RoomMessage[]>([
+    { id: 1, user: 'System', msg: 'Phòng chờ đã được tạo. Chia sẻ mã phòng để đối thủ tham gia.' },
+  ])
+  const [chatMsg, setChatMsg] = useState('')
 
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
@@ -101,6 +119,8 @@ function App() {
   const blockIntervalRef = useRef<number | null>(null)
   const aiTimeoutRef = useRef<number | null>(null)
   const chainTimeoutRef = useRef<number | null>(null)
+  const roomJoinTimeoutRef = useRef<number | null>(null)
+  const countdownRef = useRef<number | null>(null)
 
   const hLinesRef = useRef<number[][]>([])
   const vLinesRef = useRef<number[][]>([])
@@ -152,6 +172,14 @@ function App() {
     if (chainTimeoutRef.current) {
       window.clearTimeout(chainTimeoutRef.current)
       chainTimeoutRef.current = null
+    }
+    if (roomJoinTimeoutRef.current) {
+      window.clearTimeout(roomJoinTimeoutRef.current)
+      roomJoinTimeoutRef.current = null
+    }
+    if (countdownRef.current) {
+      window.clearInterval(countdownRef.current)
+      countdownRef.current = null
     }
   }, [])
 
@@ -626,12 +654,114 @@ function App() {
     gameActiveRef.current = false
     setGameActive(false)
     clearTimers()
+    setRoomCountdown(null)
+    setJoinCode('')
+    setChatMsg('')
     setScreen('home')
   }, [clearTimers])
 
   const showHistory = useCallback(() => {
     setScreen('history')
   }, [])
+
+  const createRoom = useCallback(() => {
+    const code = genRoomCode()
+    setRoomCode(code)
+    setRoomPlayers(1)
+    setRoomChat([
+      { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
+    ])
+    setRoomCountdown(null)
+    setScreen('waiting')
+
+    if (roomJoinTimeoutRef.current) {
+      window.clearTimeout(roomJoinTimeoutRef.current)
+    }
+
+    roomJoinTimeoutRef.current = window.setTimeout(() => {
+      setRoomPlayers(2)
+      setRoomChat((prev) => [
+        ...prev,
+        { id: Date.now(), user: 'System', msg: 'Đối thủ đã tham gia! Bắt đầu sau 5 giây...' },
+      ])
+
+      let remaining = 5
+      setRoomCountdown(remaining)
+      if (countdownRef.current) {
+        window.clearInterval(countdownRef.current)
+      }
+
+      countdownRef.current = window.setInterval(() => {
+        remaining -= 1
+        setRoomCountdown(remaining)
+        if (remaining <= 0) {
+          if (countdownRef.current) {
+            window.clearInterval(countdownRef.current)
+            countdownRef.current = null
+          }
+          setRoomCountdown(null)
+          startGame()
+        }
+      }, 1000)
+    }, 5000)
+  }, [startGame])
+
+  const joinRoom = useCallback(() => {
+    if (!joinCode.trim()) {
+      showToast('Nhập mã phòng!')
+      return
+    }
+
+    const code = joinCode.trim().toUpperCase()
+    setRoomCode(code)
+    setRoomPlayers(2)
+    setRoomChat([
+      { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
+      { id: 2, user: 'System', msg: 'Bắt đầu sau 3 giây...' },
+    ])
+    setJoinCode('')
+    setScreen('waiting')
+
+    if (roomJoinTimeoutRef.current) {
+      window.clearTimeout(roomJoinTimeoutRef.current)
+    }
+    if (countdownRef.current) {
+      window.clearInterval(countdownRef.current)
+    }
+
+    let remaining = 3
+    setRoomCountdown(remaining)
+    countdownRef.current = window.setInterval(() => {
+      remaining -= 1
+      setRoomCountdown(remaining)
+      if (remaining <= 0) {
+        if (countdownRef.current) {
+          window.clearInterval(countdownRef.current)
+          countdownRef.current = null
+        }
+        setRoomCountdown(null)
+        startGame()
+      }
+    }, 1000)
+  }, [joinCode, showToast, startGame])
+
+  const sendChat = useCallback(() => {
+    if (!chatMsg.trim()) return
+
+    setRoomChat((prev) => [...prev, { id: Date.now(), user: 'Bạn', msg: chatMsg }])
+    setChatMsg('')
+
+    window.setTimeout(() => {
+      setRoomChat((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          user: 'Đối thủ',
+          msg: ['Sẵn sàng rồi!', 'Tôi sẽ thắng 😄', 'Gg!'][Math.floor(Math.random() * 3)],
+        },
+      ])
+    }, 1200 + Math.random() * 800)
+  }, [chatMsg])
 
   const connectWallet = useCallback(() => {
     const addr =
@@ -792,12 +922,13 @@ function App() {
       </div>
 
       {screen !== 'home' && (
-        <nav className="nav-bar">
+        <nav className="nav">
           <div className="nav-logo">D&amp;B // CHAIN</div>
           <div className="nav-links">
             <button className="btn-ghost" onClick={toggleTheme}>
               {themeMode === 'dark' ? '☀ Sáng' : '🌙 Tối'}
             </button>
+            <button className="btn-ghost" onClick={() => setScreen('room')}>Room</button>
             <button className="btn-ghost" onClick={goHome}>Home</button>
             <button className="btn-ghost" onClick={showHistory}>Lịch Sử</button>
           </div>
@@ -806,7 +937,7 @@ function App() {
 
       <div className="wrap">
         {screen === 'home' && (
-          <section className="screen active" id="homeScreen">
+          <section className="screen" id="homeScreen">
             <div className="logo-wrap">
               <div className="logo-title">DOTS &amp; BOXES</div>
               <div className="logo-sub">Blockchain Edition // Testnet</div>
@@ -827,8 +958,7 @@ function App() {
               </div>
               {walletConnected && (
                 <div className="wallet-balance">
-                  Số dư: <span className="balance-val">{walletBalance}</span> ETH &nbsp;·&nbsp; Ví:{' '}
-                  <span className="network-val">Sepolia</span>
+                  Số dư: <span className="balance-val">{walletBalance}</span> ETH · <span className="network-val">Sepolia</span>
                 </div>
               )}
             </div>
@@ -836,13 +966,13 @@ function App() {
             <div className="config-card">
               <div className="config-title">⬡ Cấu Hình Ván Chơi</div>
 
-              <div className="config-row">
+              <div className="row">
                 <label>Kích Thước Bảng</label>
                 <div className="size-btns">
                   {[3, 4, 5, 6].map((size) => (
                     <button
                       key={size}
-                      className={`size-btn ${gridSize === size ? 'active' : ''}`}
+                      className={`sz-btn ${gridSize === size ? 'on' : ''}`}
                       onClick={() => setGridSize(size)}
                     >
                       {size}×{size}
@@ -851,118 +981,214 @@ function App() {
                 </div>
               </div>
 
-              <div className="config-row">
+              <div className="row">
                 <label>Stake (ETH)</label>
-                <div className="stake-input-wrap">
+                <div className="stake-wrap">
                   <input
-                    className="stake-input"
+                    className="stake-inp"
                     type="number"
                     min="0"
                     step="0.001"
                     value={stakeEth}
-                    onChange={(e) => {
-                      const value = Number.parseFloat(e.target.value)
-                      setStakeEth(Number.isFinite(value) ? value : 0)
-                    }}
+                    onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                   />
                   <span className="stake-unit">ETH</span>
                 </div>
               </div>
 
-              <div className="config-row">
+              <div className="row">
                 <label>Chế Độ Chơi</label>
                 <div className="mode-btns">
-                  <button
-                    className={`mode-btn ${gameMode === 'pvp' ? 'active' : ''}`}
-                    onClick={() => setGameMode('pvp')}
-                  >
+                  <button className={`md-btn ${gameMode === 'pvp' ? 'on' : ''}`} onClick={() => setGameMode('pvp')}>
                     👥 PvP Local
                   </button>
-                  <button
-                    className={`mode-btn ${gameMode === 'ai' ? 'active' : ''}`}
-                    onClick={() => setGameMode('ai')}
-                  >
+                  <button className={`md-btn ${gameMode === 'ai' ? 'on' : ''}`} onClick={() => setGameMode('ai')}>
                     🤖 vs AI
                   </button>
                 </div>
               </div>
 
-              <div className="config-row">
+              <div className="row">
                 <label>Chế Độ Nền</label>
                 <div className="mode-btns">
-                  <button
-                    className={`mode-btn ${themeMode === 'light' ? 'active' : ''}`}
-                    onClick={() => setThemeMode('light')}
-                  >
+                  <button className={`md-btn ${themeMode === 'light' ? 'on' : ''}`} onClick={() => setThemeMode('light')}>
                     ☀ Sáng
                   </button>
-                  <button
-                    className={`mode-btn ${themeMode === 'dark' ? 'active' : ''}`}
-                    onClick={() => setThemeMode('dark')}
-                  >
+                  <button className={`md-btn ${themeMode === 'dark' ? 'on' : ''}`} onClick={() => setThemeMode('dark')}>
                     🌙 Tối
                   </button>
                 </div>
               </div>
             </div>
 
-            <button className="btn-primary" onClick={startGame}>
-              ⚡ BẮT ĐẦU VÁN CHƠI
-            </button>
+            <button className="btn-primary" onClick={startGame}>⚡ BẮT ĐẦU VÁN CHƠI</button>
 
-            <button className="btn-ghost history-btn" onClick={showHistory}>
-              📋 Xem Lịch Sử On-chain
-            </button>
+            <div className="room-btns">
+              <button className="room-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
+              <button className="btn-ghost" style={{ flex: 1 }} onClick={showHistory}>📋 Lịch Sử</button>
+              <button className="btn-ghost" onClick={toggleTheme}>⚙</button>
+            </div>
+          </section>
+        )}
 
-            <BackendDemoPanel />
+        {screen === 'room' && (
+          <section className="screen room-screen">
+            <div style={{ width: '100%', maxWidth: 480 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                <button className="btn-ghost" onClick={goHome}>← Quay lại</button>
+                <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 16, color: 'var(--accent)' }}>
+                  Phòng Chơi Online
+                </div>
+              </div>
+
+              <div className="card" style={{ marginBottom: 0 }}>
+                <div className="card-title">🚪 Tạo Phòng Mới</div>
+                <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
+                  Tạo phòng riêng và chia sẻ mã cho đối thủ để bắt đầu ván đấu.
+                </p>
+                <div className="row">
+                  <label>Kích Thước Bảng</label>
+                  <div className="size-btns">
+                    {[3, 4, 5, 6].map((size) => (
+                      <button key={size} className={`sz-btn ${gridSize === size ? 'on' : ''}`} onClick={() => setGridSize(size)}>
+                        {size}×{size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="row">
+                  <label>Stake (ETH)</label>
+                  <div className="stake-wrap">
+                    <input
+                      className="stake-inp"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={stakeEth}
+                      onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
+                    />
+                    <span className="stake-unit">ETH</span>
+                  </div>
+                </div>
+                <button className="btn-primary" style={{ marginTop: 4 }} onClick={createRoom}>⚡ TẠO PHÒNG</button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0', color: 'var(--muted)', fontSize: 12 }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <span>HOẶC</span>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              </div>
+
+              <div className="card" style={{ marginBottom: 0 }}>
+                <div className="card-title">🔑 Vào Phòng</div>
+                <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
+                  Nhập mã phòng 6 ký tự để tham gia ván đấu.
+                </p>
+                <div className="join-row">
+                  <input
+                    className="join-inp"
+                    placeholder="XXXXXX"
+                    value={joinCode}
+                    maxLength={6}
+                    onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
+                  />
+                  <button className="btn-primary" style={{ width: 'auto', padding: '11px 20px' }} onClick={joinRoom}>
+                    Vào →
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {screen === 'waiting' && (
+          <section className="screen waiting-screen">
+            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 14, color: 'var(--accent)', letterSpacing: 3, textTransform: 'uppercase' }}>
+              Phòng Chờ
+            </div>
+
+            <div className="room-code-box">
+              <div className="code-label">Mã Phòng</div>
+              <div className="code-val">{roomCode}</div>
+              <div className="code-hint">Chia sẻ mã này cho đối thủ</div>
+              <div className="players-row">
+                <div className="player-slot">
+                  <div className="slot-avatar p1">X</div>
+                  <div className="slot-name">Bạn</div>
+                </div>
+                <div className="vs-sep">VS</div>
+                <div className="player-slot">
+                  <div className={`slot-avatar ${roomPlayers >= 2 ? 'p2' : 'empty'}`}>
+                    {roomPlayers >= 2 ? 'O' : '?'}
+                  </div>
+                  <div className="slot-name">{roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}</div>
+                </div>
+              </div>
+            </div>
+
+            {roomCountdown !== null ? (
+              <div key={roomCountdown} className="countdown">{roomCountdown}</div>
+            ) : (
+              <div className="waiting-label">⏳ Đang chờ đối thủ...</div>
+            )}
+
+            <div className="chat-box">
+              <div className="chat-header">💬 Chat Phòng</div>
+              <div className="chat-messages">
+                {roomChat.map((msg) => (
+                  <div key={msg.id} className="chat-msg">
+                    <span className={`user ${msg.user === 'System' ? 'sys' : msg.user === 'Bạn' ? 'you' : 'opp'}`}>
+                      {msg.user}:
+                    </span>
+                    {msg.msg}
+                  </div>
+                ))}
+              </div>
+              <div className="chat-send">
+                <input
+                  className="chat-inp"
+                  placeholder="Nhắn tin..."
+                  value={chatMsg}
+                  onChange={(e) => setChatMsg(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendChat()}
+                />
+                <button className="chat-send-btn" onClick={sendChat}>Gửi</button>
+              </div>
+            </div>
+
+            <button className="btn-ghost" onClick={goHome}>← Thoát Phòng</button>
           </section>
         )}
 
         {screen === 'game' && (
-          <section className="screen active game-screen" id="gameScreen">
+          <section className="screen game-screen" id="gameScreen">
             <div className="scoreboard">
-              <div className={`player-card ${currentPlayer === 1 ? 'active' : ''}`} id="p1Card">
-                <div className="player-name">
-                  NGƯỜI CHƠI <span className="player-color">X</span>
-                </div>
-                <div className="player-score score-p1">{scores[0]}</div>
-                <div className="player-boxes">{scores[0]} ô</div>
+              <div className={`p-card ${currentPlayer === 1 ? 'active' : ''}`} id="p1Card">
+                <div className="p-name">NGƯỜI CHƠI <span className="player-color">X</span></div>
+                <div className="p-score" style={{ color: 'var(--p1)' }}>{scores[0]}</div>
+                <div className="p-boxes">{scores[0]} ô</div>
               </div>
-              <div className="vs-badge">VS</div>
-              <div className={`player-card p2 ${currentPlayer === 2 ? 'active' : ''}`} id="p2Card">
-                <div className="player-name">
+              <div className="vs">VS</div>
+              <div className={`p-card p2 ${currentPlayer === 2 ? 'active' : ''}`} id="p2Card">
+                <div className="p-name">
                   {gameMode === 'ai' ? 'AI' : 'NGƯỜI CHƠI'} <span className="player-color player-p2">O</span>
                 </div>
-                <div className="player-score score-p2">{scores[1]}</div>
-                <div className="player-boxes">{scores[1]} ô</div>
+                <div className="p-score" style={{ color: 'var(--p2)' }}>{scores[1]}</div>
+                <div className="p-boxes">{scores[1]} ô</div>
               </div>
             </div>
 
-            <div className="chain-ticker">
-              <div className="ticker-item">
-                <span className="ticker-label">Block</span>
-                <span className="ticker-val green">#{blockNum.toLocaleString()}</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Stake</span>
-                <span className="ticker-val gold">{stakeEth.toFixed(3)} ETH</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Gas</span>
-                <span className="ticker-val pink">12 gwei</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Moves</span>
-                <span className="ticker-val green">{totalMoves}</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Contract</span>
-                <span className="ticker-val contract">0x4a2f...c3e1</span>
-              </div>
+            <div className="ticker">
+              <div className="ticker-item"><span className="t-lbl">Block</span><span className="t-val green">#{blockNum.toLocaleString()}</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Stake</span><span className="t-val gold">{stakeEth.toFixed(3)} ETH</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Gas</span><span className="t-val pink">12 gwei</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Moves</span><span className="t-val green">{totalMoves}</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">0x4a2f...c3e1</span></div>
             </div>
 
             <div className="turn-pill">
@@ -978,11 +1204,7 @@ function App() {
                 ref={canvasRef}
                 width={canvasSize}
                 height={canvasSize}
-                style={{
-                  width: `${canvasSize}px`,
-                  height: `${canvasSize}px`,
-                  cursor: hoveredLine ? 'pointer' : 'default',
-                }}
+                style={{ width: `${canvasSize}px`, height: `${canvasSize}px`, cursor: hoveredLine ? 'pointer' : 'default' }}
                 onMouseMove={onCanvasMouseMove}
                 onMouseLeave={() => setHoveredLine(null)}
                 onClick={onCanvasClick}
@@ -992,40 +1214,34 @@ function App() {
             <div className="game-actions">
               <button className="btn-ghost" onClick={goHome}>← Thoát</button>
               <button className="btn-ghost" onClick={undoMove} disabled={!gameActive}>↩ Hoàn Tác</button>
-              <button className="btn-primary forfeit-btn" onClick={confirmForfeit} disabled={!gameActive}>Bỏ Cuộc</button>
+              <button className="forfeit-btn" onClick={confirmForfeit} disabled={!gameActive}>Bỏ Cuộc</button>
+              <button className="btn-ghost" onClick={() => setScreen('room')}>⚙ Cài đặt</button>
             </div>
           </section>
         )}
 
         {screen === 'history' && (
-          <section className="screen active history-screen" id="historyScreen">
-            <div className="history-header">
+          <section className="screen history-screen" id="historyScreen">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div className="history-title">⬡ Lịch Sử On-Chain</div>
-                <div className="history-subtitle">Sepolia Testnet · Smart Contract 0x4a2f...c3e1</div>
+                <div className="h-title">⬡ Lịch Sử On-Chain</div>
+                <div style={{ fontSize: 11, letterSpacing: 2, color: 'var(--muted)', textTransform: 'uppercase', marginTop: 4 }}>
+                  Sepolia Testnet · Smart Contract 0x4a2f...c3e1
+                </div>
               </div>
               <button className="btn-ghost" onClick={goHome}>← Quay Lại</button>
             </div>
 
             <div className="stats-row">
-              <div className="stat-card">
-                <div className="stat-val c1">{gameHistory.length}</div>
-                <div className="stat-lbl">Ván Đã Chơi</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val c3">{totalEth.toFixed(3)}</div>
-                <div className="stat-lbl">Tổng ETH</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div>
-                <div className="stat-lbl">Win Rate X</div>
-              </div>
+              <div className="stat-card"><div className="s-val c1">{gameHistory.length}</div><div className="s-lbl">Ván Đã Chơi</div></div>
+              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ETH</div></div>
+              <div className="stat-card"><div className="s-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div><div className="s-lbl">Win Rate X</div></div>
             </div>
 
-            <div className="history-list">
+            <div className="h-list">
               {!gameHistory.length && (
                 <div className="empty-state">
-                  <div className="empty-icon">📭</div>
+                  <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.4 }}>📭</div>
                   <div>Chưa có ván nào được ghi on-chain</div>
                 </div>
               )}
@@ -1040,29 +1256,19 @@ function App() {
                       : `${game.mode === 'ai' ? 'AI (O)' : 'O'} THẮNG`
 
                 return (
-                  <div className="history-item" key={game.id}>
+                  <div className="h-item" key={game.id}>
                     <div className="h-num">#{gameHistory.length - idx}</div>
-                    <div className="h-info">
-                      <div className="h-players">
-                        X vs {game.mode === 'ai' ? 'AI (O) 🤖' : 'O'} · {game.gridSize}×{game.gridSize}
-                      </div>
-                      <div className="h-meta">
-                        {game.date} · {game.moves} nước đi
-                      </div>
+                    <div>
+                      <div className="h-players">X vs {game.mode === 'ai' ? 'AI (O) 🤖' : 'O'} · {game.gridSize}×{game.gridSize}</div>
+                      <div className="h-meta">{game.date} · {game.moves} nước đi</div>
                     </div>
-                    <div className="h-result">
-                      <span className={`win-badge ${badgeClass}`}>{badgeText}</span>
-                      <div className="h-score">
-                        {game.scores[0]} - {game.scores[1]}
-                      </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <span className={`badge ${badgeClass}`}>{badgeText}</span>
+                      <div style={{ color: 'var(--muted)', fontSize: 11, marginTop: 4 }}>{game.scores[0]} - {game.scores[1]}</div>
                     </div>
-                    <div className="h-tx">
-                      <div className="h-tx-hash">
-                        {game.tx.slice(0, 10)}...{game.tx.slice(-6)}
-                      </div>
-                      <div className="h-amount">
-                        {game.stake > 0 ? `${game.stake.toFixed(3)} ETH` : 'Free'}
-                      </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="h-tx-hash">{game.tx.slice(0, 10)}...{game.tx.slice(-6)}</div>
+                      <div className="h-amount">{game.stake > 0 ? `${game.stake.toFixed(3)} ETH` : 'Free'}</div>
                     </div>
                   </div>
                 )
@@ -1073,7 +1279,7 @@ function App() {
       </div>
 
       {modalState.open && (
-        <div className="modal-overlay active">
+        <div className="modal-overlay">
           <div className="modal">
             <div className="modal-icon">{modalState.icon}</div>
             <div className="modal-title">{modalState.title}</div>
