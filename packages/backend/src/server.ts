@@ -5,6 +5,7 @@ import { logger } from "./config/logger";
 import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
+import { JwtTokenService } from "./services/authService";
 
 export type BackendServer = {
   io: IOServer;
@@ -22,11 +23,36 @@ export function createBackendServer(env: AppEnv): BackendServer {
     },
   });
 
+  const tokenService = new JwtTokenService(env);
   const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);
   const roomSweepTimer = setInterval(() => {
     roomManager.sweepExpired();
   }, env.ROOM_SWEEP_INTERVAL_MS);
   roomSweepTimer.unref();
+
+  // Socket.io authentication middleware
+  io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error("Authentication token required"));
+    }
+
+    try {
+      const result = tokenService.verifyAccessToken(token);
+      if (!result.payload || result.error) {
+        return next(new Error("Invalid authentication token"));
+      }
+      socket.data.userId = result.payload.userId;
+      socket.data.username = result.payload.username;
+      socket.data.email = result.payload.email;
+      next();
+    } catch (error) {
+      logger.error("socket_auth_failed", {
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+      next(new Error("Invalid authentication token"));
+    }
+  });
 
   registerSocketHandlers(io, {
     roomManager,
