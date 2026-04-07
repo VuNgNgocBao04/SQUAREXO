@@ -13,16 +13,19 @@ export class UserStore {
    * Create a new user
    */
   createUser(user: User): User {
-    if (this.usersByEmail.has(user.email)) {
+    const normalizedEmail = user.email.toLowerCase();
+    const normalizedUsername = user.username.toLowerCase();
+
+    if (this.usersByEmail.has(normalizedEmail)) {
       throw new Error(`User with email ${user.email} already exists`);
     }
-    if (this.usersByUsername.has(user.username.toLowerCase())) {
+    if (this.usersByUsername.has(normalizedUsername)) {
       throw new Error(`User with username ${user.username} already exists`);
     }
 
     this.users.set(user.id, user);
-    this.usersByEmail.set(user.email, user.id);
-    this.usersByUsername.set(user.username.toLowerCase(), user.id);
+    this.usersByEmail.set(normalizedEmail, user.id);
+    this.usersByUsername.set(normalizedUsername, user.id);
     return user;
   }
 
@@ -37,7 +40,7 @@ export class UserStore {
    * Find user by email
    */
   findByEmail(email: string): User | undefined {
-    const userId = this.usersByEmail.get(email);
+    const userId = this.usersByEmail.get(email.toLowerCase());
     if (!userId) return undefined;
     return this.users.get(userId);
   }
@@ -46,12 +49,9 @@ export class UserStore {
    * Find user by username
    */
   findByUsername(username: string): User | undefined {
-    for (const user of this.users.values()) {
-      if (user.username === username) {
-        return user;
-      }
-    }
-    return undefined;
+    const userId = this.usersByUsername.get(username.toLowerCase());
+    if (!userId) return undefined;
+    return this.users.get(userId);
   }
 
   /**

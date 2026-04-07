@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { io, type Socket } from 'socket.io-client'
+import { createGame, chooseAIMove, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
 import './App.css'
 
 type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
@@ -21,11 +23,6 @@ type Line = {
   c: number
 }
 
-type MoveRecord = {
-  line: Line
-  player: number
-}
-
 type HistoryRecord = {
   id: number
   date: string
@@ -42,6 +39,46 @@ type RoomMessage = {
   id: number
   user: string
   msg: string
+}
+
+type OnlinePlayer = 'X' | 'O'
+
+type RoomInfoPayload = {
+  roomId: string
+  playerX: string | null
+  playerO: string | null
+  assignedPlayer: OnlinePlayer | null
+  isFull: boolean
+  boardSize: { rows: number; cols: number }
+}
+
+type GameStatePayload = {
+  roomId: string
+  currentPlayer: OnlinePlayer
+  state: {
+    rows: number
+    cols: number
+    currentPlayer: OnlinePlayer
+    score: { X: number; O: number }
+    boxes?: Array<{ row: number; col: number; owner: OnlinePlayer }>
+    edges: Array<{
+      from: { row: number; col: number }
+      to: { row: number; col: number }
+      takenBy?: OnlinePlayer
+    }>
+  }
+}
+
+type ChatMessagePayload = {
+  roomId: string
+  playerId: string
+  message: string
+  sentAt: number
+}
+
+type SocketErrorPayload = {
+  code?: string
+  message: string
 }
 
 const DOT = 18
@@ -70,6 +107,18 @@ function genTxHash() {
 function genRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+}
+
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL && typeof import.meta.env.VITE_BACKEND_URL === 'string'
+    ? import.meta.env.VITE_BACKEND_URL
+    : 'http://localhost:3000'
+
+function createRuntimePlayerId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `player_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
+  }
+  return `player_${Math.random().toString(36).slice(2, 14)}`
 }
 
 function App() {
@@ -102,6 +151,9 @@ function App() {
   const [joinCode, setJoinCode] = useState('')
   const [roomPlayers, setRoomPlayers] = useState(1)
   const [roomCountdown, setRoomCountdown] = useState<number | null>(null)
+  const [onlineConnected, setOnlineConnected] = useState(false)
+  const [onlineAssignedPlayer, setOnlineAssignedPlayer] = useState<OnlinePlayer | null>(null)
+  const [isOnlineMatch, setIsOnlineMatch] = useState(false)
   const [roomChat, setRoomChat] = useState<RoomMessage[]>([
     { id: 1, user: 'System', msg: 'Phòng chờ đã được tạo. Chia sẻ mã phòng để đối thủ tham gia.' },
   ])
@@ -141,24 +193,29 @@ function App() {
   })
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const socketRef = useRef<Socket | null>(null)
+  const clientSequenceRef = useRef(0)
   const blockIntervalRef = useRef<number | null>(null)
   const aiTimeoutRef = useRef<number | null>(null)
   const chainTimeoutRef = useRef<number | null>(null)
-  const roomJoinTimeoutRef = useRef<number | null>(null)
   const countdownRef = useRef<number | null>(null)
+  const matchCountdownValueRef = useRef<number | null>(null)
+  const endModalShownRef = useRef(false)
+  const endGameRef = useRef<(() => void) | null>(null)
 
   const hLinesRef = useRef<number[][]>([])
   const vLinesRef = useRef<number[][]>([])
   const boxesRef = useRef<number[][]>([])
-  const moveHistoryRef = useRef<MoveRecord[]>([])
 
   const currentPlayerRef = useRef(1)
   const scoresRef = useRef<[number, number]>([0, 0])
   const totalMovesRef = useRef(0)
   const gameActiveRef = useRef(false)
   const gridSizeRef = useRef(3)
+  const roomPlayersRef = useRef(1)
   const gameModeRef = useRef<GameMode>('pvp')
   const stakeEthRef = useRef(0.01)
+  const clientPlayerIdRef = useRef(createRuntimePlayerId())
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -198,15 +255,326 @@ function App() {
       window.clearTimeout(chainTimeoutRef.current)
       chainTimeoutRef.current = null
     }
-    if (roomJoinTimeoutRef.current) {
-      window.clearTimeout(roomJoinTimeoutRef.current)
-      roomJoinTimeoutRef.current = null
-    }
     if (countdownRef.current) {
       window.clearInterval(countdownRef.current)
       countdownRef.current = null
     }
+    matchCountdownValueRef.current = null
   }, [])
+
+  const updateRoomPlayers = useCallback((count: number) => {
+    roomPlayersRef.current = count
+    setRoomPlayers(count)
+  }, [])
+
+  const stopMatchCountdown = useCallback(() => {
+    if (countdownRef.current) {
+      window.clearInterval(countdownRef.current)
+      countdownRef.current = null
+    }
+    matchCountdownValueRef.current = null
+    setRoomCountdown(null)
+  }, [])
+
+  const startMatchCountdown = useCallback(() => {
+    if (countdownRef.current) {
+      return
+    }
+
+    let remaining = 10
+    matchCountdownValueRef.current = remaining
+    setRoomCountdown(remaining)
+    setRoomChat((prev) => {
+      if (prev.some((item) => item.msg.includes('Bắt đầu sau 10 giây'))) {
+        return prev
+      }
+      return [...prev, { id: Date.now(), user: 'System', msg: 'Đủ người chơi. Bắt đầu sau 10 giây...' }]
+    })
+
+    countdownRef.current = window.setInterval(() => {
+      remaining -= 1
+      matchCountdownValueRef.current = remaining
+      setRoomCountdown(remaining)
+      if (remaining <= 0) {
+        if (countdownRef.current) {
+          window.clearInterval(countdownRef.current)
+          countdownRef.current = null
+        }
+        matchCountdownValueRef.current = null
+        setRoomCountdown(null)
+        setScreen('game')
+      }
+    }, 1000)
+  }, [])
+
+  const getChatAuthor = useCallback((playerId: string) => {
+    if (playerId === clientPlayerIdRef.current) {
+      return 'Bạn'
+    }
+    return 'Đối thủ'
+  }, [])
+
+  const edgeToLine = useCallback((edge: CoreEdge): Line => {
+    if (edge.from.row === edge.to.row) {
+      return {
+        type: 'h',
+        r: edge.from.row,
+        c: Math.min(edge.from.col, edge.to.col),
+      }
+    }
+
+    return {
+      type: 'v',
+      r: Math.min(edge.from.row, edge.to.row),
+      c: edge.from.col,
+    }
+  }, [])
+
+  const toCoreGameState = useCallback((): CoreGameState => {
+    const base = createGame(gridSizeRef.current, gridSizeRef.current)
+    const takenMap = new Map<string, 'X' | 'O'>()
+
+    for (let r = 0; r <= gridSizeRef.current; r++) {
+      for (let c = 0; c < gridSizeRef.current; c++) {
+        const owner = hLinesRef.current[r]?.[c]
+        if (owner) {
+          takenMap.set(`${r},${c}-${r},${c + 1}`, owner === 1 ? 'X' : 'O')
+        }
+      }
+    }
+
+    for (let r = 0; r < gridSizeRef.current; r++) {
+      for (let c = 0; c <= gridSizeRef.current; c++) {
+        const owner = vLinesRef.current[r]?.[c]
+        if (owner) {
+          takenMap.set(`${r},${c}-${r + 1},${c}`, owner === 1 ? 'X' : 'O')
+        }
+      }
+    }
+
+    const edges = base.edges.map((edge) => {
+      const key = `${edge.from.row},${edge.from.col}-${edge.to.row},${edge.to.col}`
+      const takenBy = takenMap.get(key)
+      return takenBy ? { ...edge, takenBy } : edge
+    })
+
+    return {
+      ...base,
+      edges,
+      currentPlayer: currentPlayerRef.current === 1 ? 'X' : 'O',
+      score: {
+        X: scoresRef.current[0],
+        O: scoresRef.current[1],
+      },
+    }
+  }, [])
+
+  const hydrateFromServerState = useCallback(
+    (payload: GameStatePayload) => {
+      const rows = payload.state.rows
+      const cols = payload.state.cols
+      if (rows !== cols) {
+        showToast('Phiên bản giao diện hiện hỗ trợ bàn cờ vuông.')
+      }
+
+      const effectiveSize = rows
+      gridSizeRef.current = effectiveSize
+      setGridSize(effectiveSize)
+
+      const next = createEmptyState(effectiveSize)
+      let takenMoves = 0
+
+      for (const edge of payload.state.edges) {
+        if (!edge.takenBy) continue
+        const owner = edge.takenBy === 'X' ? 1 : 2
+        if (edge.from.row === edge.to.row) {
+          const row = edge.from.row
+          const col = Math.min(edge.from.col, edge.to.col)
+          if (row >= 0 && row <= effectiveSize && col >= 0 && col < effectiveSize) {
+            next.hLines[row][col] = owner
+            takenMoves += 1
+          }
+        } else {
+          const row = Math.min(edge.from.row, edge.to.row)
+          const col = edge.from.col
+          if (row >= 0 && row < effectiveSize && col >= 0 && col <= effectiveSize) {
+            next.vLines[row][col] = owner
+            takenMoves += 1
+          }
+        }
+      }
+
+      if (payload.state.boxes?.length) {
+        for (const box of payload.state.boxes) {
+          if (box.row >= 0 && box.row < effectiveSize && box.col >= 0 && box.col < effectiveSize) {
+            next.boxes[box.row][box.col] = box.owner === 'X' ? 1 : 2
+          }
+        }
+      }
+
+      hLinesRef.current = next.hLines
+      vLinesRef.current = next.vLines
+      boxesRef.current = next.boxes
+      setScoresSafe([payload.state.score.X, payload.state.score.O])
+      setCurrentPlayerSafe(payload.state.currentPlayer === 'X' ? 1 : 2)
+      setTotalMovesSafe(takenMoves)
+      gameActiveRef.current = true
+      setGameActive(true)
+      setDrawVersion((v) => v + 1)
+
+      const filledBoxes = payload.state.score.X + payload.state.score.O
+      const totalBoxes = payload.state.rows * payload.state.cols
+      if (filledBoxes >= totalBoxes && !endModalShownRef.current) {
+        endModalShownRef.current = true
+        window.setTimeout(() => {
+          endGameRef.current?.()
+        }, 200)
+      }
+    },
+    [setCurrentPlayerSafe, setScoresSafe, setTotalMovesSafe, showToast],
+  )
+
+  const disconnectOnlineSocket = useCallback(() => {
+    stopMatchCountdown()
+    if (socketRef.current) {
+      socketRef.current.disconnect()
+      socketRef.current = null
+    }
+    setOnlineConnected(false)
+    setOnlineAssignedPlayer(null)
+  }, [stopMatchCountdown])
+
+  const connectOnlineSocket = useCallback(async () => {
+    disconnectOnlineSocket()
+
+    const socket = io(BACKEND_URL, {
+      transports: ['websocket'],
+      timeout: 5000,
+      reconnection: true,
+      reconnectionAttempts: 5,
+    })
+
+    socket.on('connect', () => {
+      setOnlineConnected(true)
+    })
+
+    socket.on('disconnect', () => {
+      setOnlineConnected(false)
+      setOnlineAssignedPlayer(null)
+      if (isOnlineMatch) {
+        showToast('Mất kết nối realtime. Vui lòng vào lại phòng.')
+      }
+    })
+
+    socket.on('room_info', (payload: RoomInfoPayload) => {
+      const playerCount = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
+      setRoomCode(payload.roomId)
+      setOnlineAssignedPlayer(payload.assignedPlayer)
+      updateRoomPlayers(playerCount)
+      setIsOnlineMatch(true)
+
+      if (payload.isFull || playerCount >= 2) {
+        startMatchCountdown()
+        setScreen('waiting')
+      } else {
+        stopMatchCountdown()
+        setScreen('waiting')
+      }
+    })
+
+    socket.on('player_joined', (payload: RoomInfoPayload) => {
+      const count = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
+      updateRoomPlayers(count)
+      setRoomCode(payload.roomId)
+      setIsOnlineMatch(true)
+      if (payload.isFull || count >= 2) {
+        startMatchCountdown()
+      }
+    })
+
+    socket.on('game_state', (payload: GameStatePayload) => {
+      hydrateFromServerState(payload)
+      setIsOnlineMatch(true)
+      if (roomPlayersRef.current >= 2 && matchCountdownValueRef.current === null) {
+        setScreen('game')
+      }
+    })
+
+    socket.on('chat_message', (payload: ChatMessagePayload) => {
+      if (payload.roomId !== roomCode && payload.roomId !== roomCode.trim().toUpperCase()) {
+        return
+      }
+
+      setRoomChat((prev) => [
+        ...prev,
+        {
+          id: payload.sentAt,
+          user: getChatAuthor(payload.playerId),
+          msg: payload.message,
+        },
+      ])
+    })
+
+    socket.on('error', (payload: SocketErrorPayload) => {
+      const message = payload?.code ? `[${payload.code}] ${payload.message}` : payload.message
+      showToast(message)
+    })
+
+    socketRef.current = socket
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        reject(new Error('Socket connection timeout'))
+      }, 6000)
+
+      socket.once('connect', () => {
+        window.clearTimeout(timeout)
+        resolve()
+      })
+
+      socket.once('connect_error', (error) => {
+        window.clearTimeout(timeout)
+        reject(error)
+      })
+    })
+
+    return socket
+  }, [
+    disconnectOnlineSocket,
+    getChatAuthor,
+    hydrateFromServerState,
+    isOnlineMatch,
+    roomCode,
+    showToast,
+    startMatchCountdown,
+    stopMatchCountdown,
+    updateRoomPlayers,
+  ])
+
+  const joinOnlineRoom = useCallback(
+    async (code: string) => {
+      try {
+        const socket = await connectOnlineSocket()
+        clientSequenceRef.current = 0
+        endModalShownRef.current = false
+        setOnlineAssignedPlayer(null)
+        updateRoomPlayers(1)
+        stopMatchCountdown()
+        setRoomCode(code)
+        setScreen('waiting')
+
+        socket.emit('join_room', {
+          roomId: code,
+          rows: gridSizeRef.current,
+          cols: gridSizeRef.current,
+          playerId: clientPlayerIdRef.current,
+        })
+      } catch {
+        showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
+      }
+    },
+    [connectOnlineSocket, showToast, stopMatchCountdown, updateRoomPlayers],
+  )
 
   const isGameOver = useCallback(() => {
     const [p1, p2] = scoresRef.current
@@ -225,6 +593,19 @@ function App() {
 
     const cell = getCellSize()
     const size = canvasSize
+    const expectedSize = gridSizeRef.current
+
+    if (
+      hLinesRef.current.length !== expectedSize + 1 ||
+      vLinesRef.current.length !== expectedSize ||
+      boxesRef.current.length !== expectedSize
+    ) {
+      const empty = createEmptyState(expectedSize)
+      hLinesRef.current = empty.hLines
+      vLinesRef.current = empty.vLines
+      boxesRef.current = empty.boxes
+    }
+
     const styles = getComputedStyle(document.documentElement)
     const canvasDot = styles.getPropertyValue('--canvas-dot').trim() || '#e0f0ff'
     const emptyLine =
@@ -337,15 +718,6 @@ function App() {
     const cell = Math.floor((maxW - PAD * 2) / gridSizeRef.current)
     const size = cell * gridSizeRef.current + PAD * 2
     setCanvasSize(size)
-  }, [])
-
-  const countEdgesBox = useCallback((r: number, c: number) => {
-    return (
-      (hLinesRef.current[r][c] ? 1 : 0) +
-      (hLinesRef.current[r + 1][c] ? 1 : 0) +
-      (vLinesRef.current[r][c] ? 1 : 0) +
-      (vLinesRef.current[r][c + 1] ? 1 : 0)
-    )
   }, [])
 
   const checkBoxes = useCallback((player: number) => {
@@ -505,6 +877,10 @@ function App() {
     }, delay)
   }, [saveHistory, spawnConfetti])
 
+  useEffect(() => {
+    endGameRef.current = endGame
+  }, [endGame])
+
   const applyMove = useCallback(
     (line: Line) => {
       if (!gameActiveRef.current) return
@@ -516,7 +892,6 @@ function App() {
         vLinesRef.current[line.r][line.c] = player
       }
 
-      moveHistoryRef.current.push({ line, player })
       setTotalMovesSafe(totalMovesRef.current + 1)
 
       const captured = checkBoxes(player)
@@ -541,116 +916,23 @@ function App() {
     [checkBoxes, endGame, isGameOver, setCurrentPlayerSafe, setTotalMovesSafe],
   )
 
-  const getAllFreeLines = useCallback(() => {
-    const lines: Line[] = []
-    for (let r = 0; r <= gridSizeRef.current; r++) {
-      for (let c = 0; c < gridSizeRef.current; c++) {
-        if (!hLinesRef.current[r][c]) lines.push({ type: 'h', r, c })
-      }
-    }
-    for (let r = 0; r < gridSizeRef.current; r++) {
-      for (let c = 0; c <= gridSizeRef.current; c++) {
-        if (!vLinesRef.current[r][c]) lines.push({ type: 'v', r, c })
-      }
-    }
-    return lines
-  }, [])
-
-  const lineCompletesBox = useCallback(
-    (line: Line) => {
-      if (line.type === 'h') {
-        if (line.r > 0 && countEdgesBox(line.r - 1, line.c) === 3) return true
-        if (line.r < gridSizeRef.current && countEdgesBox(line.r, line.c) === 3) return true
-      } else {
-        if (line.c > 0 && countEdgesBox(line.r, line.c - 1) === 3) return true
-        if (line.c < gridSizeRef.current && countEdgesBox(line.r, line.c) === 3) return true
-      }
-      return false
-    },
-    [countEdgesBox],
-  )
-
-  const lineGivesOpponent = useCallback(
-    (line: Line) => {
-      if (line.type === 'h') {
-        if (line.r > 0 && countEdgesBox(line.r - 1, line.c) === 2) return true
-        if (line.r < gridSizeRef.current && countEdgesBox(line.r, line.c) === 2) return true
-      } else {
-        if (line.c > 0 && countEdgesBox(line.r, line.c - 1) === 2) return true
-        if (line.c < gridSizeRef.current && countEdgesBox(line.r, line.c) === 2) return true
-      }
-      return false
-    },
-    [countEdgesBox],
-  )
-
   const aiMove = useCallback(() => {
     if (!gameActiveRef.current || currentPlayerRef.current !== 2) return
 
-    const all = getAllFreeLines()
-    const completing = all.find((line) => lineCompletesBox(line))
-    const safe = all.find((line) => !lineGivesOpponent(line))
-    const random = all.length ? all[Math.floor(Math.random() * all.length)] : null
-    const move = completing ?? safe ?? random
-    if (move) {
-      applyMove(move)
+    const state = toCoreGameState()
+    const selectedEdge = chooseAIMove(state)
+    if (selectedEdge) {
+      applyMove(edgeToLine(selectedEdge))
     }
-  }, [applyMove, getAllFreeLines, lineCompletesBox, lineGivesOpponent])
-
-  const rebuildFromHistory = useCallback((moves: MoveRecord[]) => {
-    const empty = createEmptyState(gridSizeRef.current)
-    const nextScores: [number, number] = [0, 0]
-
-    for (const move of moves) {
-      if (move.line.type === 'h') {
-        empty.hLines[move.line.r][move.line.c] = move.player
-      } else {
-        empty.vLines[move.line.r][move.line.c] = move.player
-      }
-
-      for (let r = 0; r < gridSizeRef.current; r++) {
-        for (let c = 0; c < gridSizeRef.current; c++) {
-          if (empty.boxes[r][c]) continue
-          if (
-            empty.hLines[r][c] &&
-            empty.hLines[r + 1][c] &&
-            empty.vLines[r][c] &&
-            empty.vLines[r][c + 1]
-          ) {
-            empty.boxes[r][c] = move.player
-            nextScores[move.player - 1] += 1
-          }
-        }
-      }
-    }
-
-    hLinesRef.current = empty.hLines
-    vLinesRef.current = empty.vLines
-    boxesRef.current = empty.boxes
-    setScoresSafe(nextScores)
-  }, [setScoresSafe])
-
-  const undoMove = useCallback(() => {
-    if (!moveHistoryRef.current.length) {
-      showToast('Không có nước để hoàn tác!')
-      return
-    }
-
-    const last = moveHistoryRef.current.pop()
-    if (!last) return
-
-    rebuildFromHistory(moveHistoryRef.current)
-    setCurrentPlayerSafe(last.player)
-    setTotalMovesSafe(moveHistoryRef.current.length)
-    setDrawVersion((v) => v + 1)
-  }, [rebuildFromHistory, setCurrentPlayerSafe, setTotalMovesSafe, showToast])
+  }, [applyMove, edgeToLine, toCoreGameState])
 
   const startGame = useCallback(() => {
+    setIsOnlineMatch(false)
+    endModalShownRef.current = false
     const empty = createEmptyState(gridSize)
     hLinesRef.current = empty.hLines
     vLinesRef.current = empty.vLines
     boxesRef.current = empty.boxes
-    moveHistoryRef.current = []
 
     setScoresSafe([0, 0])
     setCurrentPlayerSafe(1)
@@ -679,11 +961,14 @@ function App() {
     gameActiveRef.current = false
     setGameActive(false)
     clearTimers()
+    disconnectOnlineSocket()
+    setIsOnlineMatch(false)
     setRoomCountdown(null)
     setJoinCode('')
     setChatMsg('')
+    endModalShownRef.current = false
     setScreen('home')
-  }, [clearTimers])
+  }, [clearTimers, disconnectOnlineSocket])
 
   const openSettings = useCallback(() => {
     if (screen !== 'settings') {
@@ -707,44 +992,16 @@ function App() {
   const createRoom = useCallback(() => {
     const code = genRoomCode()
     setRoomCode(code)
-    setRoomPlayers(1)
+    updateRoomPlayers(1)
     setRoomChat([
       { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
     ])
     setRoomCountdown(null)
+    setGameMode('pvp')
     setScreen('waiting')
-
-    if (roomJoinTimeoutRef.current) {
-      window.clearTimeout(roomJoinTimeoutRef.current)
-    }
-
-    roomJoinTimeoutRef.current = window.setTimeout(() => {
-      setRoomPlayers(2)
-      setRoomChat((prev) => [
-        ...prev,
-        { id: Date.now(), user: 'System', msg: 'Đối thủ đã tham gia! Bắt đầu sau 5 giây...' },
-      ])
-
-      let remaining = 5
-      setRoomCountdown(remaining)
-      if (countdownRef.current) {
-        window.clearInterval(countdownRef.current)
-      }
-
-      countdownRef.current = window.setInterval(() => {
-        remaining -= 1
-        setRoomCountdown(remaining)
-        if (remaining <= 0) {
-          if (countdownRef.current) {
-            window.clearInterval(countdownRef.current)
-            countdownRef.current = null
-          }
-          setRoomCountdown(null)
-          startGame()
-        }
-      }, 1000)
-    }, 5000)
-  }, [startGame])
+    setIsOnlineMatch(true)
+    void joinOnlineRoom(code)
+  }, [joinOnlineRoom])
 
   const joinRoom = useCallback(() => {
     if (!joinCode.trim()) {
@@ -754,54 +1011,33 @@ function App() {
 
     const code = joinCode.trim().toUpperCase()
     setRoomCode(code)
-    setRoomPlayers(2)
+    updateRoomPlayers(1)
     setRoomChat([
       { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
-      { id: 2, user: 'System', msg: 'Bắt đầu sau 3 giây...' },
+      { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
     ])
     setJoinCode('')
+    setGameMode('pvp')
     setScreen('waiting')
-
-    if (roomJoinTimeoutRef.current) {
-      window.clearTimeout(roomJoinTimeoutRef.current)
-    }
-    if (countdownRef.current) {
-      window.clearInterval(countdownRef.current)
-    }
-
-    let remaining = 3
-    setRoomCountdown(remaining)
-    countdownRef.current = window.setInterval(() => {
-      remaining -= 1
-      setRoomCountdown(remaining)
-      if (remaining <= 0) {
-        if (countdownRef.current) {
-          window.clearInterval(countdownRef.current)
-          countdownRef.current = null
-        }
-        setRoomCountdown(null)
-        startGame()
-      }
-    }, 1000)
-  }, [joinCode, showToast, startGame])
+    setIsOnlineMatch(true)
+    void joinOnlineRoom(code)
+  }, [joinCode, joinOnlineRoom, showToast, updateRoomPlayers])
 
   const sendChat = useCallback(() => {
-    if (!chatMsg.trim()) return
+    const message = chatMsg.trim()
+    if (!message) return
 
-    setRoomChat((prev) => [...prev, { id: Date.now(), user: 'Bạn', msg: chatMsg }])
+    if (isOnlineMatch && onlineConnected && socketRef.current && roomCode) {
+      socketRef.current.emit('chat_message', {
+        roomId: roomCode,
+        message,
+      })
+    } else {
+      setRoomChat((prev) => [...prev, { id: Date.now(), user: 'Bạn', msg: message }])
+    }
+
     setChatMsg('')
-
-    window.setTimeout(() => {
-      setRoomChat((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          user: 'Đối thủ',
-          msg: ['Sẵn sàng rồi!', 'Tôi sẽ thắng 😄', 'Gg!'][Math.floor(Math.random() * 3)],
-        },
-      ])
-    }, 1200 + Math.random() * 800)
-  }, [chatMsg])
+  }, [chatMsg, isOnlineMatch, onlineConnected, roomCode])
 
   const connectWallet = useCallback(() => {
     const addr =
@@ -821,25 +1057,6 @@ function App() {
       showToast('Kết nối ví thành công!')
     }, 1200)
   }, [showToast])
-
-  const confirmForfeit = useCallback(() => {
-    if (!window.confirm('Xác nhận bỏ cuộc? Đối thủ sẽ thắng.')) return
-
-    gameActiveRef.current = false
-    setGameActive(false)
-    if (blockIntervalRef.current) {
-      window.clearInterval(blockIntervalRef.current)
-      blockIntervalRef.current = null
-    }
-
-    const winner = currentPlayerRef.current === 1 ? 2 : 1
-    const full = gridSizeRef.current * gridSizeRef.current
-    const nextScores: [number, number] = winner === 1 ? [full, 0] : [0, full]
-    setScoresSafe(nextScores)
-    setCurrentPlayerSafe(winner)
-    setDrawVersion((v) => v + 1)
-    endGame()
-  }, [endGame, setCurrentPlayerSafe, setScoresSafe])
 
   const playAgain = useCallback(() => {
     setModalState((prev) => ({ ...prev, open: false }))
@@ -887,9 +1104,47 @@ function App() {
         line.type === 'h' ? hLinesRef.current[line.r][line.c] : vLinesRef.current[line.r][line.c]
       if (taken) return
 
+      if (isOnlineMatch) {
+        const socket = socketRef.current
+        if (!socket || !onlineConnected) {
+          showToast('Mất kết nối server realtime')
+          return
+        }
+        if (!onlineAssignedPlayer) {
+          showToast('Bạn đang là spectator, chưa có quyền đánh')
+          return
+        }
+
+        const expectedTurn = onlineAssignedPlayer === 'X' ? 1 : 2
+        if (currentPlayerRef.current !== expectedTurn) {
+          showToast('Chưa tới lượt của bạn')
+          return
+        }
+
+        const edge =
+          line.type === 'h'
+            ? {
+                from: { row: line.r, col: line.c },
+                to: { row: line.r, col: line.c + 1 },
+              }
+            : {
+                from: { row: line.r, col: line.c },
+                to: { row: line.r + 1, col: line.c },
+              }
+
+        clientSequenceRef.current += 1
+        socket.emit('make_move', {
+          roomId: roomCode,
+          actionId: `${clientPlayerIdRef.current}-${Date.now()}-${clientSequenceRef.current}`,
+          clientSequence: clientSequenceRef.current,
+          edge,
+        })
+        return
+      }
+
       applyMove(line)
     },
-    [applyMove, getLineFromPos],
+    [applyMove, getLineFromPos, isOnlineMatch, onlineAssignedPlayer, onlineConnected, roomCode, showToast],
   )
 
   const totalEth = useMemo(() => {
@@ -1017,11 +1272,12 @@ function App() {
   useEffect(() => {
     return () => {
       clearTimers()
+      disconnectOnlineSocket()
       if (toastTimeoutRef.current) {
         window.clearTimeout(toastTimeoutRef.current)
       }
     }
-  }, [clearTimers])
+  }, [clearTimers, disconnectOnlineSocket])
 
   return (
     <div className="db-app">
@@ -1246,18 +1502,6 @@ function App() {
                   </button>
                   <button className={`md-btn ${gameMode === 'ai' ? 'on' : ''}`} onClick={() => setGameMode('ai')}>
                     🤖 vs AI
-                  </button>
-                </div>
-              </div>
-
-              <div className="row">
-                <label>Chế Độ Nền</label>
-                <div className="mode-btns">
-                  <button className={`md-btn ${themeMode === 'light' ? 'on' : ''}`} onClick={() => setThemeMode('light')}>
-                    ☀ Sáng
-                  </button>
-                  <button className={`md-btn ${themeMode === 'dark' ? 'on' : ''}`} onClick={() => setThemeMode('dark')}>
-                    🌙 Tối
                   </button>
                 </div>
               </div>
@@ -1560,7 +1804,8 @@ function App() {
               Lượt:{' '}
               <span style={{ color: currentPlayer === 1 ? 'var(--p1)' : 'var(--p2)' }}>
                 {currentPlayer === 1 ? 'X' : gameMode === 'ai' ? 'AI (O) 🤖' : 'O'}
-              </span>
+              </span>{' '}
+              · {gameActive ? 'Đang chơi' : 'Kết thúc'}
             </div>
 
             <div className="board-wrap">
@@ -1578,8 +1823,6 @@ function App() {
 
             <div className="game-actions">
               <button className="btn-ghost" onClick={goHome}>← Thoát</button>
-              <button className="btn-ghost" onClick={undoMove} disabled={!gameActive}>↩ Hoàn Tác</button>
-              <button className="forfeit-btn" onClick={confirmForfeit} disabled={!gameActive}>Bỏ Cuộc</button>
               <button className="btn-ghost" onClick={openSettings}>⚙ Cài đặt</button>
             </div>
           </section>

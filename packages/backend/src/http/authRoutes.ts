@@ -188,7 +188,12 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       // Verify refresh token
       const result = tokenService.verifyRefreshToken(refreshToken);
       if (result.error || !result.payload) {
-        const code = result.error === 'TOKEN_EXPIRED' ? 'EXPIRED_REFRESH_TOKEN' : 'INVALID_REFRESH_TOKEN';
+        const code =
+          result.error === 'TOKEN_EXPIRED'
+            ? 'EXPIRED_REFRESH_TOKEN'
+            : result.error === 'TOKEN_REVOKED'
+              ? 'REVOKED_REFRESH_TOKEN'
+              : 'INVALID_REFRESH_TOKEN';
         return res.status(401).json({
           error: "Invalid or expired refresh token",
           code,
@@ -218,6 +223,34 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       });
     } catch (error) {
       console.error("Refresh token error:", error);
+      return res.status(500).json({
+        error: "Internal server error",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  });
+
+  /**
+   * POST /auth/logout
+   * Revoke refresh token for current session
+   */
+  router.post("/logout", async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const parsed = refreshTokenSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Validation error",
+          code: "VALIDATION_ERROR",
+          details: parsed.error.issues,
+        });
+      }
+
+      tokenService.revokeRefreshToken(parsed.data.refreshToken);
+      return res.status(200).json({
+        success: true,
+      });
+    } catch (error) {
+      console.error("Logout error:", error);
       return res.status(500).json({
         error: "Internal server error",
         code: "INTERNAL_ERROR",

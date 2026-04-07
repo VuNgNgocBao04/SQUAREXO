@@ -10,6 +10,7 @@ export class JwtTokenService {
   private secret: string;
   private expiresIn: string;
   private refreshTokenExpiresIn: string;
+  private revokedRefreshTokens = new Set<string>();
 
   constructor(env: AppEnv) {
     this.secret = env.JWT_SECRET;
@@ -74,6 +75,10 @@ export class JwtTokenService {
    * Verify a refresh token and validate tokenType
    */
   verifyRefreshToken(token: string): { payload: RefreshTokenPayload | null; error?: string } {
+    if (this.revokedRefreshTokens.has(token)) {
+      return { payload: null, error: 'TOKEN_REVOKED' };
+    }
+
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
@@ -93,6 +98,10 @@ export class JwtTokenService {
       }
       return { payload: null, error: 'INVALID_TOKEN' };
     }
+  }
+
+  revokeRefreshToken(token: string): void {
+    this.revokedRefreshTokens.add(token);
   }
 
   /**
