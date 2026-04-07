@@ -5,6 +5,23 @@ import { logger } from "./config/logger";
 import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
+import type { JwtPayload } from "./types/auth";
+import type { JwtTokenService } from "./services/authService";
+
+function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string | string[] | undefined): string | null {
+  if (typeof rawAuthToken === "string" && rawAuthToken.length > 0) {
+    return rawAuthToken;
+  }
+
+  if (typeof authorizationHeader === "string") {
+    const [scheme, token] = authorizationHeader.split(" ");
+    if (scheme === "Bearer" && token) {
+      return token;
+    }
+  }
+
+  return null;
+}
 
 export type BackendServer = {
   io: IOServer;
@@ -20,6 +37,27 @@ export function createBackendServer(env: AppEnv): BackendServer {
       origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN,
       methods: ["GET", "POST"],
     },
+  });
+
+  const tokenService = (app as { tokenService?: JwtTokenService }).tokenService;
+  if (!tokenService) {
+    throw new Error("Token service is not available for socket authentication");
+  }
+  io.use((socket, next) => {
+    const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
+    if (!token) {
+      next(new Error("MISSING_TOKEN"));
+      return;
+    }
+
+    const verified = tokenService.verifyAccessToken(token);
+    if (verified.error || !verified.payload) {
+      next(new Error(verified.error ?? "INVALID_TOKEN"));
+      return;
+    }
+
+    socket.data.user = verified.payload as JwtPayload;
+    next();
   });
 
   const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);

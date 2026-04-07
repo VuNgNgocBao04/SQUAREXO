@@ -95,12 +95,12 @@ describe("UserStore", () => {
       expect(found).toBeUndefined();
     });
 
-    it("should be case-sensitive for email", () => {
+    it("should find user by email regardless of casing", () => {
       const user = createTestUser();
       store.createUser(user);
 
       const found = store.findByEmail("TEST@EXAMPLE.COM");
-      expect(found).toBeUndefined();
+      expect(found).toEqual(user);
     });
   });
 

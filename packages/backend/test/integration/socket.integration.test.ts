@@ -1,5 +1,6 @@
 import { AddressInfo } from "node:net";
 import { io as ioClient, Socket } from "socket.io-client";
+import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SocketEvents } from "../../src/contracts/events";
 import { createBackendServer } from "../../src/server";
@@ -53,11 +54,39 @@ function waitConnected(socket: Socket, timeoutMs = 3000): Promise<void> {
   });
 }
 
+async function registerAndGetAccessToken(baseUrl: string, suffix: string): Promise<string> {
+  const response = await request(baseUrl)
+    .post("/api/auth/register")
+    .send({
+      username: `socket_user_${suffix}`,
+      email: `socket_${suffix}@example.com`,
+      password: "password123",
+    });
+
+  expect(response.status).toBe(201);
+  expect(response.body).toHaveProperty("accessToken");
+  return response.body.accessToken as string;
+}
+
+function createAuthenticatedSocket(baseUrl: string, accessToken: string): Socket {
+  return ioClient(baseUrl, {
+    transports: ["websocket"],
+    auth: {
+      token: accessToken,
+    },
+  });
+}
+
 describe("socket integration", () => {
   const env: AppEnv = {
     PORT: 0,
     CORS_ORIGIN: "*",
     NODE_ENV: "test",
+    JWT_SECRET: "test-secret-key-that-is-long-enough-for-testing",
+    JWT_ISSUER: "squarexo-test-suite",
+    JWT_AUDIENCE: "squarexo-test-clients",
+    JWT_EXPIRES_IN: "7d",
+    REFRESH_TOKEN_EXPIRES_IN: "30d",
     PUBLIC_BASE_URL: "http://localhost:0",
     RECONNECT_TIMEOUT_MS: 15000,
     DEDUPE_WINDOW_MS: 10000,
@@ -80,9 +109,28 @@ describe("socket integration", () => {
     await server.close();
   });
 
+  it("rejects socket connection without access token", async () => {
+    const client = ioClient(baseUrl, {
+      transports: ["websocket"],
+      timeout: 1000,
+    });
+
+    try {
+      const connectError = await waitEvent<Error>({
+        socket: client,
+        event: "connect_error",
+      });
+      expect(connectError.message).toBe("MISSING_TOKEN");
+    } finally {
+      client.disconnect();
+    }
+  });
+
   it("allows two clients to join and play one valid move", async () => {
-    const c1 = ioClient(baseUrl, { transports: ["websocket"] });
-    const c2 = ioClient(baseUrl, { transports: ["websocket"] });
+    const token1 = await registerAndGetAccessToken(baseUrl, "match_1");
+    const token2 = await registerAndGetAccessToken(baseUrl, "match_2");
+    const c1 = createAuthenticatedSocket(baseUrl, token1);
+    const c2 = createAuthenticatedSocket(baseUrl, token2);
 
     try {
       await Promise.all([waitConnected(c1), waitConnected(c2)]);
@@ -98,8 +146,8 @@ describe("socket integration", () => {
         predicate: (payload) => payload.roomId === "room_match",
       });
 
-      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_match", rows: 2, cols: 2, playerId: "p1" });
-      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_match", rows: 2, cols: 2, playerId: "p2" });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_match", rows: 2, cols: 2 });
+      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_match", rows: 2, cols: 2 });
 
       const [roomInfo1, roomInfo2] = await Promise.all([roomInfo1Promise, roomInfo2Promise]);
 
@@ -129,7 +177,8 @@ describe("socket integration", () => {
   });
 
   it("returns validation error for bad payload without crashing", async () => {
-    const client = ioClient(baseUrl, { transports: ["websocket"] });
+    const token = await registerAndGetAccessToken(baseUrl, "validation_1");
+    const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
       await waitConnected(client);
@@ -145,7 +194,7 @@ describe("socket integration", () => {
         event: SocketEvents.ROOM_INFO,
         predicate: (payload) => payload.roomId === "room_ok",
       });
-      client.emit(SocketEvents.JOIN_ROOM, { roomId: "room_ok", rows: 2, cols: 2, playerId: "p1" });
+      client.emit(SocketEvents.JOIN_ROOM, { roomId: "room_ok", rows: 2, cols: 2 });
       const roomInfo = await roomInfoPromise;
       expect(roomInfo.roomId).toBe("room_ok");
     } finally {
@@ -154,7 +203,8 @@ describe("socket integration", () => {
   });
 
   it("deduplicates make_move by actionId", async () => {
-    const client = ioClient(baseUrl, { transports: ["websocket"] });
+    const token = await registerAndGetAccessToken(baseUrl, "dedupe_1");
+    const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
       await waitConnected(client);
@@ -164,7 +214,7 @@ describe("socket integration", () => {
         event: SocketEvents.ROOM_INFO,
         predicate: (payload) => payload.roomId === "room_dedupe",
       });
-      client.emit(SocketEvents.JOIN_ROOM, { roomId: "room_dedupe", rows: 2, cols: 2, playerId: "p1" });
+      client.emit(SocketEvents.JOIN_ROOM, { roomId: "room_dedupe", rows: 2, cols: 2 });
       await roomInfoPromise;
 
       const payload = {
@@ -197,7 +247,8 @@ describe("socket integration", () => {
   });
 
   it("rejects duplicate or out-of-order client sequence", async () => {
-    const client = ioClient(baseUrl, { transports: ["websocket"] });
+    const token = await registerAndGetAccessToken(baseUrl, "sequence_1");
+    const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
       await waitConnected(client);
@@ -211,7 +262,6 @@ describe("socket integration", () => {
         roomId: "room_sequence_guard",
         rows: 2,
         cols: 2,
-        playerId: "p1",
       });
       await roomInfoPromise;
 
@@ -245,7 +295,8 @@ describe("socket integration", () => {
   });
 
   it("rate-limits rapid make_move events per socket", async () => {
-    const client = ioClient(baseUrl, { transports: ["websocket"] });
+    const token = await registerAndGetAccessToken(baseUrl, "ratelimit_1");
+    const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
       await waitConnected(client);
@@ -259,7 +310,6 @@ describe("socket integration", () => {
         roomId: "room_rate_limit",
         rows: 2,
         cols: 2,
-        playerId: "p1",
       });
       await roomInfoPromise;
 
@@ -297,8 +347,10 @@ describe("socket integration", () => {
   });
 
   it("rejects join_room when requested board size mismatches existing room", async () => {
-    const c1 = ioClient(baseUrl, { transports: ["websocket"] });
-    const c2 = ioClient(baseUrl, { transports: ["websocket"] });
+    const token1 = await registerAndGetAccessToken(baseUrl, "sizeguard_1");
+    const token2 = await registerAndGetAccessToken(baseUrl, "sizeguard_2");
+    const c1 = createAuthenticatedSocket(baseUrl, token1);
+    const c2 = createAuthenticatedSocket(baseUrl, token2);
 
     try {
       await Promise.all([waitConnected(c1), waitConnected(c2)]);
@@ -308,11 +360,11 @@ describe("socket integration", () => {
         event: SocketEvents.ROOM_INFO,
         predicate: (payload) => payload.roomId === "room_size_guard",
       });
-      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_size_guard", rows: 2, cols: 2, playerId: "p1" });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_size_guard", rows: 2, cols: 2 });
       await roomInfoPromise;
 
       const errorPromise = waitEvent<any>({ socket: c2, event: SocketEvents.ERROR });
-      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_size_guard", rows: 3, cols: 2, playerId: "p2" });
+      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_size_guard", rows: 3, cols: 2 });
       const error = await errorPromise;
 
       expect(error.code).toBe("VALIDATION_ERROR");
@@ -324,9 +376,12 @@ describe("socket integration", () => {
   });
 
   it("releases previous room slot immediately when switching rooms", async () => {
-    const c1 = ioClient(baseUrl, { transports: ["websocket"] });
-    const c2 = ioClient(baseUrl, { transports: ["websocket"] });
-    const c3 = ioClient(baseUrl, { transports: ["websocket"] });
+    const token1 = await registerAndGetAccessToken(baseUrl, "switch_1");
+    const token2 = await registerAndGetAccessToken(baseUrl, "switch_2");
+    const token3 = await registerAndGetAccessToken(baseUrl, "switch_3");
+    const c1 = createAuthenticatedSocket(baseUrl, token1);
+    const c2 = createAuthenticatedSocket(baseUrl, token2);
+    const c3 = createAuthenticatedSocket(baseUrl, token3);
 
     try {
       await Promise.all([waitConnected(c1), waitConnected(c2), waitConnected(c3)]);
@@ -342,8 +397,8 @@ describe("socket integration", () => {
         predicate: (payload) => payload.roomId === "room_old",
       });
 
-      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2, playerId: "p1" });
-      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2, playerId: "p2" });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2 });
+      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2 });
 
       await Promise.all([oldInfo1, oldInfo2]);
 
@@ -352,7 +407,7 @@ describe("socket integration", () => {
         event: SocketEvents.ROOM_INFO,
         predicate: (payload) => payload.roomId === "room_new",
       });
-      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_new", rows: 2, cols: 2, playerId: "p1" });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_new", rows: 2, cols: 2 });
       await newRoomJoin;
 
       const reclaimed = waitEvent<any>({
@@ -360,7 +415,7 @@ describe("socket integration", () => {
         event: SocketEvents.ROOM_INFO,
         predicate: (payload) => payload.roomId === "room_old",
       });
-      c3.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2, playerId: "p3" });
+      c3.emit(SocketEvents.JOIN_ROOM, { roomId: "room_old", rows: 2, cols: 2 });
       const reclaimedInfo = await reclaimed;
 
       expect(reclaimedInfo.assignedPlayer).toBe("X");
@@ -372,8 +427,10 @@ describe("socket integration", () => {
   });
 
   it("plays full 1x1 match with two clients", async () => {
-    const c1 = ioClient(baseUrl, { transports: ["websocket"] });
-    const c2 = ioClient(baseUrl, { transports: ["websocket"] });
+    const token1 = await registerAndGetAccessToken(baseUrl, "fullmatch_1");
+    const token2 = await registerAndGetAccessToken(baseUrl, "fullmatch_2");
+    const c1 = createAuthenticatedSocket(baseUrl, token1);
+    const c2 = createAuthenticatedSocket(baseUrl, token2);
 
     try {
       await Promise.all([waitConnected(c1), waitConnected(c2)]);
@@ -389,8 +446,8 @@ describe("socket integration", () => {
         predicate: (payload) => payload.roomId === "room_full_match",
       });
 
-      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_full_match", rows: 1, cols: 1, playerId: "p1" });
-      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_full_match", rows: 1, cols: 1, playerId: "p2" });
+      c1.emit(SocketEvents.JOIN_ROOM, { roomId: "room_full_match", rows: 1, cols: 1 });
+      c2.emit(SocketEvents.JOIN_ROOM, { roomId: "room_full_match", rows: 1, cols: 1 });
 
       const [info1, info2] = await Promise.all([info1Promise, info2Promise]);
       const byPlayer: Record<string, Socket> = {

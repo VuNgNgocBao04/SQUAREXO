@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import jwt from "jsonwebtoken";
 import { JwtTokenService } from "../../src/services/authService";
 import type { AppEnv } from "../../src/config/env";
 
@@ -8,6 +9,8 @@ describe("JwtTokenService", () => {
     CORS_ORIGIN: "*",
     NODE_ENV: "test",
     JWT_SECRET: "test-secret-key-that-is-long-enough-for-testing",
+    JWT_ISSUER: "squarexo-test-suite",
+    JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
     PUBLIC_BASE_URL: "http://localhost:3000",
@@ -69,6 +72,7 @@ describe("JwtTokenService", () => {
       expect(result.payload?.email).toBe("test@example.com");
       expect(result.payload?.role).toBe("user");
       expect(result.payload?.tokenType).toBe("access");
+      expect(result.payload?.jti).toEqual(expect.any(String));
     });
 
     it("should return error for invalid token", () => {
@@ -106,6 +110,25 @@ describe("JwtTokenService", () => {
       expect(result.error).toBe("INVALID_TOKEN");
       expect(result.payload).toBeNull();
     });
+
+    it("should reject access token missing required claims", () => {
+      const malformedAccessToken = jwt.sign(
+        {
+          userId: "user123",
+          tokenType: "access",
+        },
+        mockEnv.JWT_SECRET,
+        {
+          expiresIn: "7d",
+          algorithm: "HS256",
+        },
+      );
+
+      const result = tokenService.verifyAccessToken(malformedAccessToken);
+
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
+    });
   });
 
   describe("signRefreshToken", () => {
@@ -126,6 +149,31 @@ describe("JwtTokenService", () => {
       expect(result.payload).not.toBeNull();
       expect(result.payload?.userId).toBe("user123");
       expect(result.payload?.tokenType).toBe("refresh");
+      expect(result.payload?.jti).toEqual(expect.any(String));
+    });
+
+    it("should reject refresh token after explicit revocation", () => {
+      const token = tokenService.signRefreshToken("user123");
+      const revoke = tokenService.revokeRefreshToken(token);
+
+      expect(revoke.revoked).toBe(true);
+
+      const result = tokenService.verifyRefreshToken(token);
+      expect(result.error).toBe("TOKEN_REVOKED");
+      expect(result.payload).toBeNull();
+    });
+
+    it("should reject old refresh token after rotation", () => {
+      const firstToken = tokenService.signRefreshToken("user123");
+      const firstPayload = tokenService.verifyRefreshToken(firstToken).payload;
+
+      expect(firstPayload).not.toBeNull();
+
+      tokenService.signRefreshToken("user123", firstPayload!.jti);
+
+      const oldTokenResult = tokenService.verifyRefreshToken(firstToken);
+      expect(oldTokenResult.error).toBe("TOKEN_REVOKED");
+      expect(oldTokenResult.payload).toBeNull();
     });
 
     it("should return error for invalid refresh token", () => {
@@ -143,6 +191,24 @@ describe("JwtTokenService", () => {
       };
       const accessToken = tokenService.signAccessToken(payload);
       const result = tokenService.verifyRefreshToken(accessToken);
+
+      expect(result.error).toBe("INVALID_TOKEN");
+      expect(result.payload).toBeNull();
+    });
+
+    it("should reject refresh token payload missing userId", () => {
+      const malformedRefreshToken = jwt.sign(
+        {
+          tokenType: "refresh",
+        },
+        mockEnv.JWT_SECRET,
+        {
+          expiresIn: "30d",
+          algorithm: "HS256",
+        },
+      );
+
+      const result = tokenService.verifyRefreshToken(malformedRefreshToken);
 
       expect(result.error).toBe("INVALID_TOKEN");
       expect(result.payload).toBeNull();

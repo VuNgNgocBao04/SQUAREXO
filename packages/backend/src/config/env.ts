@@ -12,6 +12,8 @@ const envSchema = z.object({
   DEDUPE_WINDOW_MS: z.coerce.number().int().min(1000).max(300000).default(15000),
   ROOM_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).max(300000).default(5000),
   JWT_SECRET: z.string().min(32),
+  JWT_ISSUER: z.string().min(1).default("squarexo-backend"),
+  JWT_AUDIENCE: z.string().min(1).default("squarexo-clients"),
   JWT_EXPIRES_IN: z.string().default("7d"),
   REFRESH_TOKEN_EXPIRES_IN: z.string().default("30d"),
 });
