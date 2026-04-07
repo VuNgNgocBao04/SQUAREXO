@@ -557,6 +557,7 @@ body {
   display: flex;
   align-items: center;
   background: var(--nav-bg);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
@@ -718,16 +719,60 @@ body {
   letter-spacing: 2px;
 }
 
+.turn-pill--spaced {
+  margin-top: 16px;
+}
+
+.turn-pill-highlight {
+  font-weight: 700;
+}
+
+.turn-pill-highlight-p1 {
+  color: var(--p1);
+}
+
+.turn-pill-highlight-p2 {
+  color: var(--p2);
+}
+
 .board-wrap {
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
 }
 
+.board-wrap--game {
+  margin-top: 20px;
+}
+
+.board-wrap--full {
+  margin-top: 20px;
+  width: 100%;
+}
+
 #gameBoard {
   display: block;
   max-width: 100%;
   height: auto;
+}
+
+.game-board-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  cursor: pointer;
+}
+
+.game-board-canvas--hover {
+  cursor: pointer;
+}
+
+.online-board-canvas {
+  display: block;
+  max-width: 560px;
+  width: 100%;
+  height: auto;
+  margin: 0 auto;
 }
 
 .forfeit-btn {
@@ -882,6 +927,7 @@ body {
   inset: 0;
   z-index: 200;
   background: rgba(0, 0, 0, 0.8);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
@@ -989,6 +1035,7 @@ body {
   display: flex;
   align-items: center;
   background: var(--nav-bg);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
@@ -1226,6 +1273,21 @@ body {
   max-width: 480px;
   position: relative;
   overflow: hidden;
+}
+
+.room-code-box--wide {
+  max-width: 100%;
+  margin-top: 8px;
+}
+
+.scoreboard--wide {
+  max-width: 100%;
+  margin-top: 0;
+}
+
+.player-p1,
+.score-p1 {
+  color: var(--p1);
 }
 
 .room-code-box::before {

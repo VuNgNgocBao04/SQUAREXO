@@ -624,7 +624,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
           <div className="backend-demo-title">Phòng chờ</div>
           <div className="backend-demo-subtitle">Đang chờ người chơi thứ 2 vào phòng...</div>
 
-          <div className="room-code-box" style={{ maxWidth: '100%', marginTop: 8 }}>
+          <div className="room-code-box room-code-box--wide">
             <div className="code-label">Mã phòng</div>
             <div className="code-val">{roomId}</div>
             <div className="code-hint">Chia sẻ Room ID này cho người chơi còn lại</div>
@@ -651,30 +651,30 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
 
       {stage === 'game' && (
         <>
-          <div className="scoreboard" style={{ maxWidth: '100%', marginTop: 0 }}>
+          <div className="scoreboard scoreboard--wide">
             <div className={`p-card ${currentTurn === 'X' ? 'active' : ''}`}>
-              <div className="p-name">NGƯỜI CHƠI <span style={{ color: 'var(--p1)' }}>X</span></div>
-              <div className="p-score" style={{ color: 'var(--p1)' }}>{boardState?.score.X ?? 0}</div>
+              <div className="p-name">NGƯỜI CHƠI <span className="player-color player-p1">X</span></div>
+              <div className="p-score score-p1">{boardState?.score.X ?? 0}</div>
               <div className="p-boxes">{boardState?.score.X ?? 0} ô</div>
             </div>
             <div className="vs">VS</div>
             <div className={`p-card p2 ${currentTurn === 'O' ? 'active' : ''}`}>
-              <div className="p-name">NGƯỜI CHƠI <span style={{ color: 'var(--p2)' }}>O</span></div>
-              <div className="p-score" style={{ color: 'var(--p2)' }}>{boardState?.score.O ?? 0}</div>
+              <div className="p-name">NGƯỜI CHƠI <span className="player-color player-p2">O</span></div>
+              <div className="p-score score-p2">{boardState?.score.O ?? 0}</div>
               <div className="p-boxes">{boardState?.score.O ?? 0} ô</div>
             </div>
           </div>
 
-          <div className="turn-pill" style={{ marginTop: 16 }}>
-            Lượt: <span style={{ color: currentTurn === 'X' ? 'var(--p1)' : 'var(--p2)' }}>{currentTurn}</span>
+          <div className="turn-pill turn-pill--spaced">
+            Lượt: <span className={currentTurn === 'X' ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>{currentTurn}</span>
           </div>
 
-          <div className="board-wrap" style={{ marginTop: 20, width: '100%' }}>
+          <div className="board-wrap board-wrap--full">
             <canvas
+              className="online-board-canvas"
               ref={canvasRef}
               width={560}
               height={560}
-              style={{ width: '100%', maxWidth: 560, height: 'auto', display: 'block', margin: '0 auto' }}
               onMouseMove={onCanvasMove}
               onMouseLeave={onCanvasLeave}
               onClick={onCanvasClick}

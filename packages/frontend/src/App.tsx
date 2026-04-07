@@ -1487,6 +1487,8 @@ function App() {
                     type="number"
                     min="0"
                     step="0.001"
+                    title="Stake amount in ETH"
+                    placeholder="0.001"
                     value={stakeEth}
                     onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                   />
@@ -1675,6 +1677,8 @@ function App() {
                       type="number"
                       min="0"
                       step="0.001"
+                      title="Stake amount in ETH"
+                      placeholder="0.001"
                       value={stakeEth}
                       onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                     />
@@ -1775,7 +1779,7 @@ function App() {
             <div className="scoreboard">
               <div className={`p-card ${currentPlayer === 1 ? 'active' : ''}`} id="p1Card">
                 <div className="p-name">NGƯỜI CHƠI <span className="player-color">X</span></div>
-                <div className="p-score" style={{ color: 'var(--p1)' }}>{scores[0]}</div>
+                <div className="p-score score-p1">{scores[0]}</div>
                 <div className="p-boxes">{scores[0]} ô</div>
               </div>
               <div className="vs">VS</div>
@@ -1783,7 +1787,7 @@ function App() {
                 <div className="p-name">
                   {gameMode === 'ai' ? 'AI' : 'NGƯỜI CHƠI'} <span className="player-color player-p2">O</span>
                 </div>
-                <div className="p-score" style={{ color: 'var(--p2)' }}>{scores[1]}</div>
+                <div className="p-score score-p2">{scores[1]}</div>
                 <div className="p-boxes">{scores[1]} ô</div>
               </div>
             </div>
@@ -1802,19 +1806,19 @@ function App() {
 
             <div className="turn-pill">
               Lượt:{' '}
-              <span style={{ color: currentPlayer === 1 ? 'var(--p1)' : 'var(--p2)' }}>
+              <span className={currentPlayer === 1 ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>
                 {currentPlayer === 1 ? 'X' : gameMode === 'ai' ? 'AI (O) 🤖' : 'O'}
               </span>{' '}
               · {gameActive ? 'Đang chơi' : 'Kết thúc'}
             </div>
 
-            <div className="board-wrap">
+            <div className="board-wrap board-wrap--game">
               <canvas
+                className={`game-board-canvas ${hoveredLine ? 'game-board-canvas--hover' : ''}`}
                 id="gameBoard"
                 ref={canvasRef}
                 width={canvasSize}
                 height={canvasSize}
-                style={{ width: `${canvasSize}px`, height: `${canvasSize}px`, cursor: hoveredLine ? 'pointer' : 'default' }}
                 onMouseMove={onCanvasMouseMove}
                 onMouseLeave={() => setHoveredLine(null)}
                 onClick={onCanvasClick}

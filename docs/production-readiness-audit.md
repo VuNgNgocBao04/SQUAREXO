@@ -1,16 +1,21 @@
 # Production Readiness Audit Summary
 
 ## Multiplayer 2-Player Mode
+
 Current status:
+
 - Backend socket integration tests pass for join/move/state sync.
 - Frontend now supports realtime room join, state hydration, and waiting countdown.
 
 Main risks still present:
+
 - No socket-level JWT authentication in realtime flow.
 - Large monolithic frontend component (`App.tsx`) increases regression risk.
 
 ## Authentication & Session Quality
+
 Completed improvements:
+
 - Normalized email validation (lowercase + trim) in auth schemas.
 - Login password policy aligned (`min(6)` + `max(128)`).
 - Added logout endpoint: `POST /api/auth/logout`.
@@ -18,25 +23,31 @@ Completed improvements:
 - Case-insensitive email lookup in user store.
 
 Remaining gaps:
+
 - User store is in-memory only.
 - No persistent token/session storage yet.
 - Frontend auth flow remains mocked and should be replaced with real API integration.
 
 ## SOLID / Clean Code Snapshot
+
 Strengths:
+
 - Game logic isolated in `game-core`.
 - Runtime payload validation via zod.
 - Clear error contracts in backend.
 
 Weaknesses:
+
 - `App.tsx` currently handles too many responsibilities.
 - Socket handler still combines orchestration + policy + telemetry.
 
 ## Potential Bug Surface
+
 - Realtime reconnect edge cases require additional integration tests.
 - Chat event now exists but lacks dedicated integration test coverage.
 
 ## Recommended Next Refactor Steps
+
 1. Split frontend into feature modules:
    - Auth
    - Lobby/Room
