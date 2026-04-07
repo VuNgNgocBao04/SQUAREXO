@@ -5,6 +5,8 @@ export interface User {
   passwordHash: string;
   role: 'user' | 'admin';
   walletAddress?: string; // For blockchain integration
+  avatarUrl?: string;
+  elo?: number;
   createdAt: Date;
   updatedAt: Date;
 }
