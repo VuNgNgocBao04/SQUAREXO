@@ -18,6 +18,8 @@ export type Room = {
   roomId: string;
   gameState: GameState;
   stateVersion: number;
+  matchStartedAt: Date;
+  matchSaved: boolean;
   boardSize: { rows: number; cols: number };
   players: Record<PlayerSlot, string | null>;
   socketToPlayerId: Map<string, string>;
@@ -53,6 +55,8 @@ export class RoomManager {
       roomId,
       gameState: initialState,
       stateVersion: 0,
+      matchStartedAt: new Date(),
+      matchSaved: false,
       boardSize: { rows, cols },
       players: { X: null, O: null },
       socketToPlayerId: new Map<string, string>(),

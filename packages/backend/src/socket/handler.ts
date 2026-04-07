@@ -15,10 +15,12 @@ import type { RoomManager } from "../room/roomManager";
 import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
 import { parsePayload } from "../utils/validation";
 import type { JwtPayload } from "../types/auth";
+import type { MatchService } from "../services/matchService";
 
 type HandlerOptions = {
   roomManager: RoomManager;
   publicBaseUrl: string;
+  matchService: MatchService;
 };
 
 type SocketContext = {
@@ -108,6 +110,40 @@ function getSocketUser(socket: Socket): JwtPayload {
     throw new ContractError(ErrorCode.INTERNAL_ERROR, "Socket user context missing");
   }
   return user;
+}
+
+async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Promise<void> {
+  const room = options.roomManager.getRoom(roomId);
+  if (!room || room.matchSaved) {
+    return;
+  }
+
+  const allEdgesTaken = room.gameState.edges.every((edge) => !!edge.takenBy);
+  if (!allEdgesTaken) {
+    return;
+  }
+
+  const playerXId = room.players.X;
+  const playerOId = room.players.O;
+  if (!playerXId || !playerOId) {
+    return;
+  }
+
+  const totalMoves = room.gameState.edges.filter((edge) => !!edge.takenBy).length;
+  await options.matchService.saveResult({
+    roomId,
+    playerXId,
+    playerOId,
+    boardRows: room.boardSize.rows,
+    boardCols: room.boardSize.cols,
+    totalMoves,
+    scoreX: room.gameState.score.X,
+    scoreO: room.gameState.score.O,
+    startedAt: room.matchStartedAt,
+    endedAt: new Date(),
+  });
+
+  room.matchSaved = true;
 }
 
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
@@ -218,6 +254,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           options.roomManager.saveProcessedAction(room, payload.actionId, nextState, room.stateVersion);
 
           emitSnapshot(io, payload.roomId, nextState);
+          await saveMatchIfFinished(options, payload.roomId);
           metrics.observeMoveLatency(Date.now() - startedAt);
         };
 
@@ -251,6 +288,8 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
 
           room.gameState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
           room.stateVersion += 1;
+          room.matchSaved = false;
+          room.matchStartedAt = new Date();
           emitSnapshot(io, payload.roomId, room.gameState);
         };
 
