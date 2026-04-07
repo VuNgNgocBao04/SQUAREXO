@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import OnlineMultiplayerPanel from './components/OnlineMultiplayerPanel'
+import * as authService from './services/auth'
 
 type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
 type GameMode = 'pvp' | 'ai'
 type LineType = 'h' | 'v'
 type ThemeMode = 'dark' | 'light'
 type AuthTab = 'login' | 'register'
+type RoomMode = 'backend' | 'mock'
 
 type User = {
   id: string
@@ -80,12 +83,16 @@ function App() {
 
   // Auth state
   const [authUser, setAuthUser] = useState<User | null>(() => {
-    try {
-      const saved = localStorage.getItem('dbAuthUser')
-      return saved ? (JSON.parse(saved) as User) : null
-    } catch {
-      return null
-    }
+    const user = authService.getUser()
+    return user
+      ? {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          avatar: '🎮',
+          joinedDate: user.createdAt ? new Date(user.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+      : null
   })
   const [authTab, setAuthTab] = useState<AuthTab>('login')
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
@@ -93,13 +100,14 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
 
-  const [screen, setScreen] = useState<Screen>(() => (authUser ? 'home' : 'auth'))
+  const [screen, setScreen] = useState<Screen>(() => (authService.isAuthenticated() ? 'home' : 'auth'))
   const [prevScreen, setPrevScreen] = useState<Exclude<Screen, 'settings'>>('home')
   const [gridSize, setGridSize] = useState(3)
   const [gameMode, setGameMode] = useState<GameMode>('pvp')
   const [stakeEth, setStakeEth] = useState(0.01)
   const [roomCode, setRoomCode] = useState('')
   const [joinCode, setJoinCode] = useState('')
+  const [roomMode, setRoomMode] = useState<RoomMode>('backend')
   const [roomPlayers, setRoomPlayers] = useState(1)
   const [roomCountdown, setRoomCountdown] = useState<number | null>(null)
   const [roomChat, setRoomChat] = useState<RoomMessage[]>([
@@ -917,22 +925,29 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
 
-    // Mock login
-    window.setTimeout(() => {
-      const user: User = {
-        id: `user_${Date.now()}`,
-        username: loginForm.username,
-        email: `${loginForm.username}@chain.io`,
-        avatar: '🎮',
-        joinedDate: '01/01/2025',
-      }
-      setAuthUser(user)
-      localStorage.setItem('dbAuthUser', JSON.stringify(user))
-      setLoginForm({ username: '', password: '' })
-      setScreen('home')
-      setAuthLoading(false)
-      showToast('Đăng nhập thành công!')
-    }, 800)
+    const email = loginForm.username.trim().toLowerCase()
+    authService
+      .login(email, loginForm.password)
+      .then((response) => {
+        const user: User = {
+          id: response.user.id,
+          username: response.user.username,
+          email: response.user.email,
+          avatar: '🎮',
+          joinedDate: response.user.createdAt
+            ? new Date(response.user.createdAt).toLocaleDateString('vi-VN')
+            : new Date().toLocaleDateString('vi-VN'),
+        }
+        setAuthUser(user)
+        setLoginForm({ username: '', password: '' })
+        setScreen('home')
+        setAuthLoading(false)
+        showToast('Đăng nhập thành công!')
+      })
+      .catch((error) => {
+        setAuthError(error instanceof Error ? error.message : 'Đăng nhập thất bại')
+        setAuthLoading(false)
+      })
   }, [loginForm, showToast])
 
   const handleRegister = useCallback(() => {
@@ -951,27 +966,33 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
 
-    // Mock register
-    window.setTimeout(() => {
-      const user: User = {
-        id: `user_${Date.now()}`,
-        username: registerForm.username,
-        email: registerForm.email,
-        avatar: '🎮',
-        joinedDate: new Date().toLocaleDateString('vi-VN'),
-      }
-      setAuthUser(user)
-      localStorage.setItem('dbAuthUser', JSON.stringify(user))
-      setRegisterForm({ username: '', email: '', password: '', confirm: '' })
-      setScreen('home')
-      setAuthLoading(false)
-      showToast('Đăng ký thành công!')
-    }, 800)
+    authService
+      .register(registerForm.username, registerForm.email, registerForm.password)
+      .then((response) => {
+        const user: User = {
+          id: response.user.id,
+          username: response.user.username,
+          email: response.user.email,
+          avatar: '🎮',
+          joinedDate: response.user.createdAt
+            ? new Date(response.user.createdAt).toLocaleDateString('vi-VN')
+            : new Date().toLocaleDateString('vi-VN'),
+        }
+        setAuthUser(user)
+        setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+        setScreen('home')
+        setAuthLoading(false)
+        showToast('Đăng ký thành công!')
+      })
+      .catch((error) => {
+        setAuthError(error instanceof Error ? error.message : 'Đăng ký thất bại')
+        setAuthLoading(false)
+      })
   }, [registerForm, showToast])
 
   const handleLogout = useCallback(() => {
+    authService.logout()
     setAuthUser(null)
-    localStorage.removeItem('dbAuthUser')
     setScreen('auth')
     setAuthTab('login')
     setLoginForm({ username: '', password: '' })
@@ -1074,10 +1095,10 @@ function App() {
               {authTab === 'login' && (
                 <div className="auth-form">
                   <div className="form-group">
-                    <label>TÊN NGƯỜI DÙNG</label>
+                    <label>EMAIL</label>
                     <input
                       type="text"
-                      placeholder="username"
+                      placeholder="email@example.com"
                       value={loginForm.username}
                       onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
                       disabled={authLoading}
@@ -1266,7 +1287,15 @@ function App() {
             <button className="btn-primary" onClick={startGame}>⚡ BẮT ĐẦU VÁN CHƠI</button>
 
             <div className="room-btns">
-              <button className="room-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
+              <button
+                className="room-btn"
+                onClick={() => {
+                  setRoomMode('backend')
+                  setScreen('room')
+                }}
+              >
+                🌐 Online 2 Người
+              </button>
               <button className="btn-ghost home-history-btn" onClick={showHistory}>📋 Lịch Sử</button>
               <button className="btn-ghost" onClick={openSettings}>⚙</button>
             </div>
@@ -1329,7 +1358,15 @@ function App() {
                 <button className="settings-nav-btn" onClick={goHome}>🏠 Trang Chủ</button>
                 <button className="settings-nav-btn" onClick={openProfile}>👤 Trang Cá Nhân</button>
                 <button className="settings-nav-btn" onClick={() => setScreen('game')}>🎮 Ván Chơi</button>
-                <button className="settings-nav-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
+                <button
+                  className="settings-nav-btn"
+                  onClick={() => {
+                    setRoomMode('backend')
+                    setScreen('room')
+                  }}
+                >
+                  🌐 Phòng Online
+                </button>
                 <button className="settings-nav-btn" onClick={showHistory}>📋 Lịch Sử On-Chain</button>
               </div>
             </div>
@@ -1408,63 +1445,89 @@ function App() {
                 <div className="room-header-title">Phòng Chơi Online</div>
               </div>
 
-              <div className="card room-card">
-                <div className="card-title">🚪 Tạo Phòng Mới</div>
-                <p className="room-desc">
-                  Tạo phòng riêng và chia sẻ mã cho đối thủ để bắt đầu ván đấu.
-                </p>
-                <div className="row">
-                  <label>Kích Thước Bảng</label>
-                  <div className="size-btns">
-                    {[3, 4, 5, 6].map((size) => (
-                      <button key={size} className={`sz-btn ${gridSize === size ? 'on' : ''}`} onClick={() => setGridSize(size)}>
-                        {size}×{size}
+              <div className="mode-btns" style={{ marginBottom: 20 }}>
+                <button
+                  className={`md-btn ${roomMode === 'backend' ? 'on' : ''}`}
+                  onClick={() => setRoomMode('backend')}
+                >
+                  🌐 Backend thật
+                </button>
+                <button
+                  className={`md-btn ${roomMode === 'mock' ? 'on' : ''}`}
+                  onClick={() => setRoomMode('mock')}
+                >
+                  🧪 Mock demo
+                </button>
+              </div>
+
+              {roomMode === 'backend' ? (
+                <OnlineMultiplayerPanel
+                  onExitToHome={(reason) => {
+                    showToast(reason)
+                    setScreen('home')
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="card room-card">
+                    <div className="card-title">🚪 Tạo Phòng Mới</div>
+                    <p className="room-desc">
+                      Tạo phòng riêng và chia sẻ mã cho đối thủ để bắt đầu ván đấu.
+                    </p>
+                    <div className="row">
+                      <label>Kích Thước Bảng</label>
+                      <div className="size-btns">
+                        {[3, 4, 5, 6].map((size) => (
+                          <button key={size} className={`sz-btn ${gridSize === size ? 'on' : ''}`} onClick={() => setGridSize(size)}>
+                            {size}×{size}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="row">
+                      <label>Stake (ETH)</label>
+                      <div className="stake-wrap">
+                        <input
+                          className="stake-inp"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={stakeEth}
+                          onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
+                        />
+                        <span className="stake-unit">ETH</span>
+                      </div>
+                    </div>
+                    <button className="btn-primary room-create-btn" onClick={createRoom}>⚡ TẠO PHÒNG</button>
+                  </div>
+
+                  <div className="room-divider-row">
+                    <div className="room-divider-line" />
+                    <span>HOẶC</span>
+                    <div className="room-divider-line" />
+                  </div>
+
+                  <div className="card room-card">
+                    <div className="card-title">🔑 Vào Phòng</div>
+                    <p className="room-desc">
+                      Nhập mã phòng 6 ký tự để tham gia ván đấu.
+                    </p>
+                    <div className="join-row">
+                      <input
+                        className="join-inp"
+                        placeholder="XXXXXX"
+                        value={joinCode}
+                        maxLength={6}
+                        onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
+                      />
+                      <button className="btn-primary room-join-btn" onClick={joinRoom}>
+                        Vào →
                       </button>
-                    ))}
+                    </div>
                   </div>
-                </div>
-                <div className="row">
-                  <label>Stake (ETH)</label>
-                  <div className="stake-wrap">
-                    <input
-                      className="stake-inp"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={stakeEth}
-                      onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
-                    />
-                    <span className="stake-unit">ETH</span>
-                  </div>
-                </div>
-                <button className="btn-primary room-create-btn" onClick={createRoom}>⚡ TẠO PHÒNG</button>
-              </div>
-
-              <div className="room-divider-row">
-                <div className="room-divider-line" />
-                <span>HOẶC</span>
-                <div className="room-divider-line" />
-              </div>
-
-              <div className="card room-card">
-                <div className="card-title">🔑 Vào Phòng</div>
-                <p className="room-desc">
-                  Nhập mã phòng 6 ký tự để tham gia ván đấu.
-                </p>
-                <div className="join-row">
-                  <input
-                    className="join-inp"
-                    placeholder="XXXXXX"
-                    value={joinCode}
-                    maxLength={6}
-                    onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                    onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
-                  />
-                  <button className="btn-primary room-join-btn" onClick={joinRoom}>
-                    Vào →
-                  </button>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           </section>
         )}
