@@ -1,4 +1,4 @@
-import jwt, { type SignOptions, TokenExpiredError, JsonWebTokenError } from "jsonwebtoken";
+import jwt, { TokenExpiredError, JsonWebTokenError } from "jsonwebtoken";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 import type { JwtPayload, RefreshTokenPayload } from "../types/auth";
@@ -30,6 +30,7 @@ export class JwtTokenService {
   private audience: string;
   private expiresIn: string;
   private refreshTokenExpiresIn: string;
+  private revokedRefreshTokens = new Set<string>();
   private activeRefreshTokenIds: Set<string> = new Set();
   private revokedRefreshTokenIds: Set<string> = new Set();
 
@@ -48,7 +49,7 @@ export class JwtTokenService {
     const jti = randomUUID();
     const fullPayload = {
       ...payload,
-      tokenType: 'access',
+      tokenType: "access",
     };
     return jwt.sign(fullPayload, this.secret, {
       expiresIn: this.expiresIn as any,
@@ -71,7 +72,7 @@ export class JwtTokenService {
     const jti = randomUUID();
     const payload: RefreshTokenPayload = {
       userId,
-      tokenType: 'refresh',
+      tokenType: "refresh",
     };
     const token = jwt.sign(payload, this.secret, {
       expiresIn: this.refreshTokenExpiresIn as any,
@@ -98,17 +99,17 @@ export class JwtTokenService {
 
       const parsed = accessPayloadSchema.safeParse(decoded);
       if (!parsed.success) {
-        return { payload: null, error: 'INVALID_TOKEN' };
+        return { payload: null, error: "INVALID_TOKEN" };
       }
 
       return { payload: parsed.data };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
-        return { payload: null, error: 'TOKEN_EXPIRED' };
+        return { payload: null, error: "TOKEN_EXPIRED" };
       } else if (error instanceof JsonWebTokenError) {
-        return { payload: null, error: 'INVALID_TOKEN' };
+        return { payload: null, error: "INVALID_TOKEN" };
       }
-      return { payload: null, error: 'INVALID_TOKEN' };
+      return { payload: null, error: "INVALID_TOKEN" };
     }
   }
 
@@ -116,6 +117,10 @@ export class JwtTokenService {
    * Verify a refresh token and validate tokenType
    */
   verifyRefreshToken(token: string): { payload: RefreshTokenPayload | null; error?: string } {
+    if (this.revokedRefreshTokens.has(token)) {
+      return { payload: null, error: "TOKEN_REVOKED" };
+    }
+
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
@@ -125,7 +130,7 @@ export class JwtTokenService {
 
       const parsed = refreshPayloadSchema.safeParse(decoded);
       if (!parsed.success) {
-        return { payload: null, error: 'INVALID_TOKEN' };
+        return { payload: null, error: "INVALID_TOKEN" };
       }
 
       if (this.revokedRefreshTokenIds.has(parsed.data.jti) || !this.activeRefreshTokenIds.has(parsed.data.jti)) {
@@ -135,11 +140,11 @@ export class JwtTokenService {
       return { payload: parsed.data };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
-        return { payload: null, error: 'TOKEN_EXPIRED' };
+        return { payload: null, error: "TOKEN_EXPIRED" };
       } else if (error instanceof JsonWebTokenError) {
-        return { payload: null, error: 'INVALID_TOKEN' };
+        return { payload: null, error: "INVALID_TOKEN" };
       }
-      return { payload: null, error: 'INVALID_TOKEN' };
+      return { payload: null, error: "INVALID_TOKEN" };
     }
   }
 
@@ -158,6 +163,10 @@ export class JwtTokenService {
   }
 
   revokeRefreshToken(token: string): { revoked: boolean; error?: string } {
+    if (this.revokedRefreshTokens.has(token)) {
+      return { revoked: false, error: "TOKEN_REVOKED" };
+    }
+
     try {
       const decoded = jwt.verify(token, this.secret, {
         algorithms: ["HS256"],
@@ -170,6 +179,7 @@ export class JwtTokenService {
         return { revoked: false, error: "INVALID_TOKEN" };
       }
 
+      this.revokedRefreshTokens.add(token);
       this.activeRefreshTokenIds.delete(parsed.data.jti);
       this.revokedRefreshTokenIds.add(parsed.data.jti);
       return { revoked: true };

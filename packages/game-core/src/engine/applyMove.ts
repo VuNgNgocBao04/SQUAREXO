@@ -13,14 +13,14 @@ function getSquareEdgeKeys(row: number, col: number): [string, string, string, s
   return [top, right, bottom, left];
 }
 
-function countCompletedSquares(state: GameState, takenEdgeKeys: Set<string>): number {
-  let completed = 0;
+function getCompletedSquarePositions(state: GameState, takenEdgeKeys: Set<string>): Array<{ row: number; col: number }> {
+  const completed: Array<{ row: number; col: number }> = [];
 
   for (let row = 0; row < state.rows; row++) {
     for (let col = 0; col < state.cols; col++) {
       const squareEdgeKeys = getSquareEdgeKeys(row, col);
       if (squareEdgeKeys.every((key) => takenEdgeKeys.has(key))) {
-        completed++;
+        completed.push({ row, col });
       }
     }
   }
@@ -48,7 +48,7 @@ export function applyMove(state: GameState, edge: Edge): GameState {
       .map((candidate) => edgeKey(candidate)),
   );
 
-  const completedBefore = countCompletedSquares(state, takenBefore);
+  const completedBefore = getCompletedSquarePositions(state, takenBefore);
 
   const newEdges = state.edges.map((candidate, index) => {
     if (index !== targetIndex) {
@@ -62,12 +62,17 @@ export function applyMove(state: GameState, edge: Edge): GameState {
   });
 
   const takenAfter = new Set([...takenBefore, moveKey]);
-  const completedAfter = countCompletedSquares(state, takenAfter);
-  const newlyCompleted = completedAfter - completedBefore;
+  const completedAfter = getCompletedSquarePositions(state, takenAfter);
+  const claimedBefore = new Set((state.boxes ?? []).map((box) => `${box.row},${box.col}`));
+  const newClaims = completedAfter
+    .filter((box) => !claimedBefore.has(`${box.row},${box.col}`))
+    .map((box) => ({ ...box, owner: player }));
+  const newlyCompleted = completedAfter.length - completedBefore.length;
 
   return {
     ...state,
     edges: newEdges,
+    boxes: [...(state.boxes ?? []), ...newClaims],
     currentPlayer: newlyCompleted > 0 ? player : nextPlayer(player),
     score: {
       ...state.score,

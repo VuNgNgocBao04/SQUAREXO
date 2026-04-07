@@ -253,6 +253,16 @@ describe("Auth API Routes", () => {
       });
     });
 
+    it("should login with case-insensitive email", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: "TEST@EXAMPLE.COM",
+        password: "password123",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("accessToken");
+    });
+
     it("should reject login with wrong password", async () => {
       const res = await request(app).post("/api/auth/login").send({
         email: "test@example.com",
@@ -346,6 +356,35 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+  });
+
+  describe("POST /api/auth/logout", () => {
+    let refreshToken: string;
+
+    beforeEach(async () => {
+      const res = await request(app).post("/api/auth/register").send({
+        username: "testuser",
+        email: "test@example.com",
+        password: "password123",
+      });
+      refreshToken = res.body.refreshToken;
+    });
+
+    it("should revoke refresh token on logout", async () => {
+      const logoutRes = await request(app)
+        .post("/api/auth/logout")
+        .send({ refreshToken });
+
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body.success).toBe(true);
+
+      const refreshRes = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(refreshRes.status).toBe(401);
+      expect(refreshRes.body.code).toBe("REVOKED_REFRESH_TOKEN");
     });
   });
 
