@@ -23,6 +23,30 @@ function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string |
   return null;
 }
 
+function buildGuestSocketUser(rawGuestId: unknown): JwtPayload | null {
+  if (typeof rawGuestId !== "string") {
+    return null;
+  }
+
+  const guestId = rawGuestId.trim();
+  if (!guestId) {
+    return null;
+  }
+
+  const safeGuest = guestId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  if (!safeGuest) {
+    return null;
+  }
+
+  return {
+    userId: `guest_${safeGuest}`,
+    username: `guest_${safeGuest}`,
+    email: `guest_${safeGuest}@squarexo.local`,
+    role: "guest",
+    tokenType: "access",
+  };
+}
+
 export type BackendServer = {
   io: IOServer;
   httpServer: ReturnType<typeof createServer>;
@@ -45,18 +69,26 @@ export function createBackendServer(env: AppEnv): BackendServer {
   }
   io.use((socket, next) => {
     const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
-    if (!token) {
+
+    if (token) {
+      const verified = tokenService.verifyAccessToken(token);
+      if (verified.error || !verified.payload) {
+        next(new Error(verified.error ?? "INVALID_TOKEN"));
+        return;
+      }
+
+      socket.data.user = verified.payload as JwtPayload;
+      next();
+      return;
+    }
+
+    const guestUser = buildGuestSocketUser(socket.handshake.auth?.playerId);
+    if (!guestUser) {
       next(new Error("MISSING_TOKEN"));
       return;
     }
 
-    const verified = tokenService.verifyAccessToken(token);
-    if (verified.error || !verified.payload) {
-      next(new Error(verified.error ?? "INVALID_TOKEN"));
-      return;
-    }
-
-    socket.data.user = verified.payload as JwtPayload;
+    socket.data.user = guestUser;
     next();
   });
 
