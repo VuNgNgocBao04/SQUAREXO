@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "prebuild": "pnpm --filter game-core build",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"

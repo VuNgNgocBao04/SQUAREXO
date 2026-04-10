@@ -145,6 +145,17 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           });
         }
 
+        const alreadyConnectedInRoom = [...room.socketToPlayerId.entries()].some(
+          ([existingSocketId, existingPlayerId]) => existingSocketId !== socket.id && existingPlayerId === playerId,
+        );
+        if (alreadyConnectedInRoom) {
+          throw new ContractError(
+            ErrorCode.ALREADY_IN_ROOM,
+            "This account is already connected in the room from another client",
+            { roomId: room.roomId },
+          );
+        }
+
         const assignedPlayer = options.roomManager.assignSocket(room, socket.id, playerId);
         socketToRoom.set(socket.id, room.roomId);
         socket.join(room.roomId);
