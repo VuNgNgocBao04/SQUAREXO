@@ -17,7 +17,7 @@ import { parsePayload } from "../utils/validation";
 import type { JwtPayload } from "../types/auth";
 import type { MatchService } from "../services/matchService";
 
-type HandlerOptions = {
+export type HandlerOptions = {
   roomManager: RoomManager;
   publicBaseUrl: string;
   matchService: MatchService;
@@ -112,7 +112,7 @@ function getSocketUser(socket: Socket): JwtPayload {
   return user;
 }
 
-async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Promise<void> {
+export async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Promise<void> {
   const room = options.roomManager.getRoom(roomId);
   if (!room || room.matchSaved) {
     return;
@@ -129,20 +129,26 @@ async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Pro
     return;
   }
 
-  const totalMoves = room.gameState.edges.filter((edge) => !!edge.takenBy).length;
-  room.matchSaved = true;
-  await options.matchService.saveResult({
-    roomId,
-    playerXId,
-    playerOId,
-    boardRows: room.boardSize.rows,
-    boardCols: room.boardSize.cols,
-    totalMoves,
-    scoreX: room.gameState.score.X,
-    scoreO: room.gameState.score.O,
-    startedAt: room.matchStartedAt,
-    endedAt: new Date(),
-  });
+  const totalMoves = room.gameState.edges.length;
+
+  try {
+    await options.matchService.saveResult({
+      roomId,
+      playerXId,
+      playerOId,
+      boardRows: room.boardSize.rows,
+      boardCols: room.boardSize.cols,
+      totalMoves,
+      scoreX: room.gameState.score.X,
+      scoreO: room.gameState.score.O,
+      startedAt: room.matchStartedAt,
+      endedAt: new Date(),
+    });
+    room.matchSaved = true;
+  } catch (error) {
+    room.matchSaved = false;
+    throw error;
+  }
 }
 
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
@@ -198,6 +204,15 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         socket.emit(SocketEvents.ROOM_INFO, roomInfo);
         emitSnapshot(io, room.roomId, room.gameState);
         socket.to(room.roomId).emit(SocketEvents.PLAYER_JOINED, roomInfo);
+
+        try {
+          await saveMatchIfFinished(options, room.roomId);
+        } catch (error) {
+          logger.error("save_match_failed", {
+            roomId: room.roomId,
+            error,
+          });
+        }
 
         metrics.setActiveRooms(options.roomManager.getRoomsCount());
       } catch (error) {
@@ -306,7 +321,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
       }
     });
 
-    socket.on(SocketEvents.SYNC_STATE, (rawPayload: unknown) => {
+    socket.on(SocketEvents.SYNC_STATE, async (rawPayload: unknown) => {
       try {
         const payload = parsePayload(syncStateSchema, rawPayload);
         const room = options.roomManager.getRoom(payload.roomId);
@@ -320,6 +335,15 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           state: room.gameState,
           currentPlayer: room.gameState.currentPlayer,
         });
+
+        try {
+          await saveMatchIfFinished(options, payload.roomId);
+        } catch (error) {
+          logger.error("save_match_failed", {
+            roomId: payload.roomId,
+            error,
+          });
+        }
       } catch (error) {
         emitError(socket, error);
       }

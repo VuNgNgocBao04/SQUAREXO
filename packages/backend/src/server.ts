@@ -6,8 +6,6 @@ import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
 import type { JwtPayload } from "./types/auth";
-import type { JwtTokenService } from "./services/authService";
-import type { MatchService } from "./services/matchService";
 
 function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string | string[] | undefined): string | null {
   if (typeof rawAuthToken === "string" && rawAuthToken.length > 0) {
@@ -31,7 +29,7 @@ export type BackendServer = {
 };
 
 export function createBackendServer(env: AppEnv): BackendServer {
-  const app = createApp(env);
+  const { app, tokenService, matchService } = createApp(env);
   const httpServer = createServer(app);
   const io = new IOServer(httpServer, {
     cors: {
@@ -40,14 +38,6 @@ export function createBackendServer(env: AppEnv): BackendServer {
     },
   });
 
-  const tokenService = (app as { tokenService?: JwtTokenService }).tokenService;
-  const matchService = (app as { matchService?: MatchService }).matchService;
-  if (!tokenService) {
-    throw new Error("Token service is not available for socket authentication");
-  }
-  if (!matchService) {
-    throw new Error("Match service is not available for socket handlers");
-  }
   io.use((socket, next) => {
     const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
     if (!token) {

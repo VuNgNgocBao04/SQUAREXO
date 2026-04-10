@@ -10,7 +10,13 @@ import { createMatchesRouter } from "../routes/matches";
 import { UserService } from "../services/userService";
 import { MatchService } from "../services/matchService";
 
-export function createApp(env: AppEnv): Express {
+export type CreatedApp = {
+  app: Express;
+  tokenService: JwtTokenService;
+  matchService: MatchService;
+};
+
+export function createApp(env: AppEnv): CreatedApp {
   const app = express();
   const tokenService = new JwtTokenService(env);
   const userService = new UserService();
@@ -49,10 +55,9 @@ export function createApp(env: AppEnv): Express {
   app.use("/users", authMiddleware, usersRoutes);
   app.use("/matches", authMiddleware, matchesRoutes);
 
-  // Export token service and auth middleware for use in server.ts
-  (app as any).tokenService = tokenService;
-  (app as any).authMiddleware = authMiddleware;
-  (app as any).matchService = matchService;
-
-  return app;
+  return {
+    app,
+    tokenService,
+    matchService,
+  };
 }
