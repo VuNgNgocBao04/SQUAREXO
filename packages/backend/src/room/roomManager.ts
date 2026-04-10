@@ -55,6 +55,9 @@ export class RoomManager {
       roomId,
       gameState: initialState,
       stateVersion: 0,
+      // matchStartedAt will be set once 2nd player joins (see assignSocket).
+      // Using a placeholder here is defensive practice to prevent undefined errors,
+      // but value will be overwritten. Never use the value from room creation time.
       matchStartedAt: new Date(),
       matchSaved: false,
       boardSize: { rows, cols },

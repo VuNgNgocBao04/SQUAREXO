@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { getPrismaClient } from "../db/prisma";
 import { calculateElo, type MatchOutcome } from "./eloService";
 import type { Edge } from "../types/gameCore";
@@ -82,7 +83,7 @@ export class MatchService {
       return { id };
     }
 
-    const result = await this.prisma.$transaction(async (tx: any) => {
+    const result = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const [playerX, playerO] = await Promise.all([
         tx.user.findUnique({ where: { id: input.playerXId } }),
         tx.user.findUnique({ where: { id: input.playerOId } }),

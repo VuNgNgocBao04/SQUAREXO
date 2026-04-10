@@ -131,6 +131,11 @@ export async function saveMatchIfFinished(options: HandlerOptions, roomId: strin
 
   const totalMoves = room.gameState.edges.length;
 
+  // Set matchSaved optimistically BEFORE await to prevent race condition:
+  // Multiple handlers (MOVE, SYNC_STATE) may check matchSaved concurrently.
+  // If we only set after resolve, both could see false and attempt save.
+  // Optimistic flag ensures only first caller proceeds; others see true and return.
+  room.matchSaved = true;
   try {
     await options.matchService.saveResult({
       roomId,
@@ -144,8 +149,8 @@ export async function saveMatchIfFinished(options: HandlerOptions, roomId: strin
       startedAt: room.matchStartedAt,
       endedAt: new Date(),
     });
-    room.matchSaved = true;
   } catch (error) {
+    // Revert flag on error so retry is possible
     room.matchSaved = false;
     throw error;
   }
@@ -205,6 +210,10 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         emitSnapshot(io, room.roomId, room.gameState);
         socket.to(room.roomId).emit(SocketEvents.PLAYER_JOINED, roomInfo);
 
+        // Attempt to save match if finished. Most common case: new player joining
+        // won't have game finished (returns early). Important case: player rejoining
+        // after game completed but match wasn't saved (e.g., prior save failed).
+        // This ensures eventual save without requiring additional retry logic.
         try {
           await saveMatchIfFinished(options, room.roomId);
         } catch (error) {
