@@ -130,6 +130,7 @@ async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Pro
   }
 
   const totalMoves = room.gameState.edges.filter((edge) => !!edge.takenBy).length;
+  room.matchSaved = true;
   await options.matchService.saveResult({
     roomId,
     playerXId,
@@ -142,8 +143,6 @@ async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Pro
     startedAt: room.matchStartedAt,
     endedAt: new Date(),
   });
-
-  room.matchSaved = true;
 }
 
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
@@ -254,7 +253,14 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           options.roomManager.saveProcessedAction(room, payload.actionId, nextState, room.stateVersion);
 
           emitSnapshot(io, payload.roomId, nextState);
-          await saveMatchIfFinished(options, payload.roomId);
+          try {
+            await saveMatchIfFinished(options, payload.roomId);
+          } catch (error) {
+            logger.error("save_match_failed", {
+              roomId: payload.roomId,
+              error,
+            });
+          }
           metrics.observeMoveLatency(Date.now() - startedAt);
         };
 
