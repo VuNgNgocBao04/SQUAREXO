@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcrypt";
 import { Router, type NextFunction, type RequestHandler, type Response } from "express";
 import { z } from "zod";
+import { ethers } from "ethers";
 import type { JwtTokenService } from "../services/authService";
 import type { UserService } from "../services/userService";
 import type { AuthenticatedRequest } from "../middleware/auth";
@@ -11,7 +12,11 @@ const registerSchema = z.object({
   username: z.string().trim().min(3).max(50),
   password: z.string().min(6).max(128),
   email: z.string().trim().toLowerCase().email().optional(),
-  walletAddress: z.string().trim().min(6).optional(),
+  walletAddress: z
+    .string()
+    .trim()
+    .refine((value) => ethers.isAddress(value), "walletAddress must be a valid EVM address")
+    .optional(),
   avatarUrl: z.string().url().optional(),
 });
 

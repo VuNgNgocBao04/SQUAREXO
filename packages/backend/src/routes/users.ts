@@ -12,8 +12,23 @@ const paginationSchema = z.object({
 export function createUsersRouter(userService: UserService, matchService: MatchService) {
   const router = Router();
 
+  const canAccessUserData = (req: AuthenticatedRequest, userId: string): boolean => {
+    if (!req.user) {
+      return false;
+    }
+
+    return req.user.role === "admin" || req.user.userId === userId;
+  };
+
   router.get("/:id", async (req: AuthenticatedRequest, res: Response) => {
     const userId = String(req.params.id);
+    if (!canAccessUserData(req, userId)) {
+      return res.status(403).json({
+        error: "Forbidden",
+        code: "FORBIDDEN",
+      });
+    }
+
     const profile = await userService.getProfile(userId);
     if (!profile) {
       return res.status(404).json({
@@ -27,6 +42,13 @@ export function createUsersRouter(userService: UserService, matchService: MatchS
 
   router.get("/:id/matches", async (req: AuthenticatedRequest, res: Response) => {
     const userId = String(req.params.id);
+    if (!canAccessUserData(req, userId)) {
+      return res.status(403).json({
+        error: "Forbidden",
+        code: "FORBIDDEN",
+      });
+    }
+
     const parsed = paginationSchema.safeParse(req.query);
     if (!parsed.success) {
       return res.status(400).json({

@@ -93,11 +93,11 @@ describe("Auth API Routes", () => {
           username: "testuser",
           email: "test@example.com",
           password: "password123",
-          walletAddress: "0x1234567890abcdef",
+          walletAddress: "0x1111111111111111111111111111111111111111",
         });
 
       expect(res.status).toBe(201);
-      expect(res.body.user.walletAddress).toBe("0x1234567890abcdef");
+      expect(res.body.user.walletAddress).toBe("0x1111111111111111111111111111111111111111");
     });
 
     it("should reject duplicate email", async () => {

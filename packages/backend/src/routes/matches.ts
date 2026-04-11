@@ -14,6 +14,18 @@ export function createMatchesRouter(matchService: MatchService) {
       });
     }
 
+    const requesterId = req.user?.userId;
+    const requesterRole = req.user?.role;
+    const isOwner = requesterId && (match.playerXId === requesterId || match.playerOId === requesterId);
+    const isAdmin = requesterRole === "admin";
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        error: "Forbidden",
+        code: "FORBIDDEN",
+      });
+    }
+
     return res.status(200).json(match);
   });
 

@@ -45,10 +45,13 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
 
     error InvalidMatchState();
     error InvalidBetAmount();
+    error InvalidRoomId();
+    error InvalidAddress();
     error Unauthorized();
     error TransferFailed();
 
     constructor(address admin, address backendSigner, uint256 joinTimeout, uint256 resultTimeout) {
+        if (admin == address(0) || backendSigner == address(0)) revert InvalidAddress();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(BACKEND_SIGNER_ROLE, backendSigner);
         joinTimeoutSeconds = joinTimeout;
@@ -56,6 +59,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function createMatch(string calldata roomId, uint256 betAmount) external payable whenNotPaused {
+        _validateRoomId(roomId);
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.None) revert InvalidMatchState();
         if (betAmount == 0 || msg.value != betAmount) revert InvalidBetAmount();
@@ -73,6 +77,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function joinMatch(string calldata roomId) external payable whenNotPaused {
+        _validateRoomId(roomId);
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.WaitingForOpponent) revert InvalidMatchState();
         if (m.creator == msg.sender) revert Unauthorized();
@@ -89,6 +94,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function submitResult(string calldata roomId, address winner) external whenNotPaused onlyRole(BACKEND_SIGNER_ROLE) {
+        _validateRoomId(roomId);
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.Active) revert InvalidMatchState();
 
@@ -104,6 +110,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function claimReward(string calldata roomId) external nonReentrant {
+        _validateRoomId(roomId);
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.Resolved) revert InvalidMatchState();
 
@@ -113,11 +120,13 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
             if (rewardClaimed[roomId][msg.sender]) revert InvalidMatchState();
             rewardClaimed[roomId][msg.sender] = true;
             amount = m.betAmount;
+            m.totalPot -= amount;
         } else {
             if (msg.sender != m.winner) revert Unauthorized();
             if (rewardClaimed[roomId][m.winner]) revert InvalidMatchState();
             rewardClaimed[roomId][m.winner] = true;
             amount = m.totalPot;
+            m.totalPot = 0;
         }
 
         (bool ok, ) = payable(msg.sender).call{value: amount}("");
@@ -127,6 +136,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function cancelUnjoinedMatch(string calldata roomId) external nonReentrant {
+        _validateRoomId(roomId);
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.WaitingForOpponent) revert InvalidMatchState();
         if (msg.sender != m.creator) revert Unauthorized();
@@ -143,6 +153,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function forceDrawOnTimeout(string calldata roomId) external {
+        _validateRoomId(roomId);
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.Active) revert InvalidMatchState();
         if (msg.sender != m.creator && msg.sender != m.opponent) revert Unauthorized();
@@ -161,5 +172,10 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
 
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
+    }
+
+    function _validateRoomId(string calldata roomId) private pure {
+        uint256 len = bytes(roomId).length;
+        if (len == 0 || len > 64) revert InvalidRoomId();
     }
 }

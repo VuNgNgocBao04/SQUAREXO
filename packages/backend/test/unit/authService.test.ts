@@ -48,14 +48,14 @@ describe("JwtTokenService", () => {
         username: "testuser",
         email: "test@example.com",
         role: "user",
-        walletAddress: "0x1234567890abcdef",
+        walletAddress: "0x1111111111111111111111111111111111111111",
       };
 
       const token = tokenService.signAccessToken(payload);
       const result = tokenService.verifyAccessToken(token);
 
       expect(result.error).toBeUndefined();
-      expect(result.payload?.walletAddress).toBe("0x1234567890abcdef");
+      expect(result.payload?.walletAddress).toBe("0x1111111111111111111111111111111111111111");
     });
   });
 

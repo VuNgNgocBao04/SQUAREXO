@@ -10,6 +10,7 @@ import { createMatchesRouter } from "../routes/matches";
 import { UserService } from "../services/userService";
 import { MatchService } from "../services/matchService";
 import { BlockchainService } from "../services/blockchainService";
+import { createIpRateLimitMiddleware } from "./rateLimit";
 
 export type CreatedApp = {
   app: Express;
@@ -25,11 +26,13 @@ export function createApp(env: AppEnv): CreatedApp {
   const matchService = new MatchService();
   const blockchainService = new BlockchainService(env);
 
+  app.set("trust proxy", 1);
   app.use(express.json());
+  app.use(createIpRateLimitMiddleware());
   app.use(
     cors({
       origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN,
-      credentials: true,
+      credentials: env.CORS_ORIGIN !== "*",
     }),
   );
 
@@ -37,12 +40,19 @@ export function createApp(env: AppEnv): CreatedApp {
   app.get("/health", (_req, res) => {
     res.status(200).json({
       status: "ok",
-      env: env.NODE_ENV,
       ts: new Date().toISOString(),
     });
   });
 
-  app.get("/metrics", (_req, res) => {
+  app.get("/metrics", (req, res) => {
+    const isLocalIp = req.ip === "127.0.0.1" || req.ip === "::1";
+    if (env.NODE_ENV === "production" && !isLocalIp) {
+      return res.status(403).json({
+        error: "Forbidden",
+        code: "FORBIDDEN",
+      });
+    }
+
     res.status(200).json(metrics.snapshot());
   });
 

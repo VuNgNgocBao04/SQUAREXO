@@ -45,7 +45,7 @@ describe("http integration", () => {
   it("returns health status", async () => {
     const response = await request(baseUrl).get("/health").expect(200);
     expect(response.body.status).toBe("ok");
-    expect(response.body.env).toBe("test");
+    expect(response.body).toHaveProperty("ts");
   });
 
   it("returns metrics payload", async () => {
