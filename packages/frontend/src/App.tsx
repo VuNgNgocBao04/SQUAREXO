@@ -81,6 +81,17 @@ type SocketErrorPayload = {
   message: string
 }
 
+type AuthApiResponse = {
+  accessToken: string
+  refreshToken?: string
+  user: {
+    id: string
+    username: string
+    email: string
+    createdAt?: string
+  }
+}
+
 const DOT = 18
 const PAD = 32
 const SNAP = 20
@@ -114,11 +125,46 @@ const BACKEND_URL =
     ? import.meta.env.VITE_BACKEND_URL
     : 'http://localhost:3000'
 
+const ACCESS_TOKEN_KEY = 'dbAccessToken'
+const REFRESH_TOKEN_KEY = 'dbRefreshToken'
+
 function createRuntimePlayerId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `player_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
   }
   return `player_${Math.random().toString(36).slice(2, 14)}`
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
+async function requestAuth(path: string, payload: Record<string, unknown>): Promise<AuthApiResponse> {
+  const response = await fetch(`${BACKEND_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  const raw = (await response.json().catch(() => null)) as
+    | AuthApiResponse
+    | { error?: string; code?: string; message?: string }
+    | null
+
+  if (!response.ok || !raw || typeof raw !== 'object' || !('accessToken' in raw) || !('user' in raw)) {
+    const message =
+      (raw && typeof raw === 'object' && 'error' in raw && typeof raw.error === 'string' && raw.error) ||
+      (raw && typeof raw === 'object' && 'message' in raw && typeof raw.message === 'string' && raw.message) ||
+      `Auth request failed (${response.status})`
+    throw new Error(message)
+  }
+
+  return raw as AuthApiResponse
 }
 
 function App() {
@@ -137,7 +183,7 @@ function App() {
     }
   })
   const [authTab, setAuthTab] = useState<AuthTab>('login')
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '', confirm: '' })
   const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
@@ -216,6 +262,13 @@ function App() {
   const gameModeRef = useRef<GameMode>('pvp')
   const stakeEthRef = useRef(0.01)
   const clientPlayerIdRef = useRef(createRuntimePlayerId())
+  const activeRoomCodeRef = useRef('')
+
+  const setActiveRoomCode = useCallback((code: string) => {
+    const normalized = code.trim().toUpperCase()
+    activeRoomCodeRef.current = normalized
+    setRoomCode(normalized)
+  }, [])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -447,11 +500,19 @@ function App() {
   const connectOnlineSocket = useCallback(async () => {
     disconnectOnlineSocket()
 
+    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY)
+    if (!accessToken) {
+      throw new Error('Phiên đăng nhập đã hết. Vui lòng đăng nhập lại để vào phòng online.')
+    }
+
     const socket = io(BACKEND_URL, {
       transports: ['websocket'],
       timeout: 5000,
       reconnection: true,
       reconnectionAttempts: 5,
+      auth: {
+        token: accessToken,
+      },
     })
 
     socket.on('connect', () => {
@@ -468,7 +529,7 @@ function App() {
 
     socket.on('room_info', (payload: RoomInfoPayload) => {
       const playerCount = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
-      setRoomCode(payload.roomId)
+      setActiveRoomCode(payload.roomId)
       setOnlineAssignedPlayer(payload.assignedPlayer)
       updateRoomPlayers(playerCount)
       setIsOnlineMatch(true)
@@ -485,7 +546,7 @@ function App() {
     socket.on('player_joined', (payload: RoomInfoPayload) => {
       const count = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
       updateRoomPlayers(count)
-      setRoomCode(payload.roomId)
+      setActiveRoomCode(payload.roomId)
       setIsOnlineMatch(true)
       if (payload.isFull || count >= 2) {
         startMatchCountdown()
@@ -501,7 +562,8 @@ function App() {
     })
 
     socket.on('chat_message', (payload: ChatMessagePayload) => {
-      if (payload.roomId !== roomCode && payload.roomId !== roomCode.trim().toUpperCase()) {
+      const activeRoomCode = activeRoomCodeRef.current
+      if (!activeRoomCode || payload.roomId.trim().toUpperCase() !== activeRoomCode) {
         return
       }
 
@@ -544,7 +606,7 @@ function App() {
     getChatAuthor,
     hydrateFromServerState,
     isOnlineMatch,
-    roomCode,
+    setActiveRoomCode,
     showToast,
     startMatchCountdown,
     stopMatchCountdown,
@@ -560,20 +622,19 @@ function App() {
         setOnlineAssignedPlayer(null)
         updateRoomPlayers(1)
         stopMatchCountdown()
-        setRoomCode(code)
+        setActiveRoomCode(code)
         setScreen('waiting')
 
         socket.emit('join_room', {
-          roomId: code,
+          roomId: code.trim().toUpperCase(),
           rows: gridSizeRef.current,
           cols: gridSizeRef.current,
-          playerId: clientPlayerIdRef.current,
         })
-      } catch {
-        showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
+      } catch (error) {
+        showToast(getErrorMessage(error, 'Không kết nối được server realtime. Kiểm tra backend và thử lại.'))
       }
     },
-    [connectOnlineSocket, showToast, stopMatchCountdown, updateRoomPlayers],
+    [connectOnlineSocket, setActiveRoomCode, showToast, stopMatchCountdown, updateRoomPlayers],
   )
 
   const isGameOver = useCallback(() => {
@@ -991,7 +1052,7 @@ function App() {
 
   const createRoom = useCallback(() => {
     const code = genRoomCode()
-    setRoomCode(code)
+    setActiveRoomCode(code)
     updateRoomPlayers(1)
     setRoomChat([
       { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
@@ -1001,7 +1062,7 @@ function App() {
     setScreen('waiting')
     setIsOnlineMatch(true)
     void joinOnlineRoom(code)
-  }, [joinOnlineRoom])
+  }, [joinOnlineRoom, setActiveRoomCode, updateRoomPlayers])
 
   const joinRoom = useCallback(() => {
     if (!joinCode.trim()) {
@@ -1010,7 +1071,7 @@ function App() {
     }
 
     const code = joinCode.trim().toUpperCase()
-    setRoomCode(code)
+    setActiveRoomCode(code)
     updateRoomPlayers(1)
     setRoomChat([
       { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
@@ -1021,15 +1082,17 @@ function App() {
     setScreen('waiting')
     setIsOnlineMatch(true)
     void joinOnlineRoom(code)
-  }, [joinCode, joinOnlineRoom, showToast, updateRoomPlayers])
+  }, [joinCode, joinOnlineRoom, setActiveRoomCode, showToast, updateRoomPlayers])
 
   const sendChat = useCallback(() => {
     const message = chatMsg.trim()
     if (!message) return
 
-    if (isOnlineMatch && onlineConnected && socketRef.current && roomCode) {
+    const activeRoomCode = activeRoomCodeRef.current
+
+    if (isOnlineMatch && onlineConnected && socketRef.current && activeRoomCode) {
       socketRef.current.emit('chat_message', {
-        roomId: roomCode,
+        roomId: activeRoomCode,
         message,
       })
     } else {
@@ -1037,7 +1100,7 @@ function App() {
     }
 
     setChatMsg('')
-  }, [chatMsg, isOnlineMatch, onlineConnected, roomCode])
+  }, [chatMsg, isOnlineMatch, onlineConnected])
 
   const connectWallet = useCallback(() => {
     const addr =
@@ -1133,8 +1196,13 @@ function App() {
               }
 
         clientSequenceRef.current += 1
+        const activeRoomCode = activeRoomCodeRef.current
+        if (!activeRoomCode) {
+          showToast('Không xác định được room hiện tại')
+          return
+        }
         socket.emit('make_move', {
-          roomId: roomCode,
+          roomId: activeRoomCode,
           actionId: `${clientPlayerIdRef.current}-${Date.now()}-${clientSequenceRef.current}`,
           clientSequence: clientSequenceRef.current,
           edge,
@@ -1144,7 +1212,7 @@ function App() {
 
       applyMove(line)
     },
-    [applyMove, getLineFromPos, isOnlineMatch, onlineAssignedPlayer, onlineConnected, roomCode, showToast],
+    [applyMove, getLineFromPos, isOnlineMatch, onlineAssignedPlayer, onlineConnected, showToast],
   )
 
   const totalEth = useMemo(() => {
@@ -1164,33 +1232,46 @@ function App() {
     setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))
   }, [])
 
-  const handleLogin = useCallback(() => {
-    if (!loginForm.username || !loginForm.password) {
-      setAuthError('Vui lòng nhập đầy đủ thông tin')
+  const handleLogin = useCallback(async () => {
+    if (!loginForm.email || !loginForm.password) {
+      setAuthError('Vui lòng nhập email và mật khẩu')
       return
     }
     setAuthError('')
     setAuthLoading(true)
 
-    // Mock login
-    window.setTimeout(() => {
+    try {
+      const data = await requestAuth('/api/auth/login', {
+        email: loginForm.email,
+        password: loginForm.password,
+      })
+
       const user: User = {
-        id: `user_${Date.now()}`,
-        username: loginForm.username,
-        email: `${loginForm.username}@chain.io`,
+        id: data.user.id,
+        username: data.user.username,
+        email: data.user.email,
         avatar: '🎮',
-        joinedDate: '01/01/2025',
+        joinedDate: data.user.createdAt ? new Date(data.user.createdAt).toLocaleDateString('vi-VN') : undefined,
       }
-      setAuthUser(user)
+
       localStorage.setItem('dbAuthUser', JSON.stringify(user))
-      setLoginForm({ username: '', password: '' })
+      localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
+      if (data.refreshToken) {
+        localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
+      }
+
+      setAuthUser(user)
+      setLoginForm({ email: '', password: '' })
       setScreen('home')
-      setAuthLoading(false)
       showToast('Đăng nhập thành công!')
-    }, 800)
+    } catch (error) {
+      setAuthError(getErrorMessage(error, 'Đăng nhập thất bại'))
+    } finally {
+      setAuthLoading(false)
+    }
   }, [loginForm, showToast])
 
-  const handleRegister = useCallback(() => {
+  const handleRegister = useCallback(async () => {
     if (!registerForm.username || !registerForm.email || !registerForm.password || !registerForm.confirm) {
       setAuthError('Vui lòng nhập đầy đủ thông tin')
       return
@@ -1206,30 +1287,46 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
 
-    // Mock register
-    window.setTimeout(() => {
-      const user: User = {
-        id: `user_${Date.now()}`,
+    try {
+      const data = await requestAuth('/api/auth/register', {
         username: registerForm.username,
         email: registerForm.email,
+        password: registerForm.password,
+      })
+
+      const user: User = {
+        id: data.user.id,
+        username: data.user.username,
+        email: data.user.email,
         avatar: '🎮',
-        joinedDate: new Date().toLocaleDateString('vi-VN'),
+        joinedDate: data.user.createdAt ? new Date(data.user.createdAt).toLocaleDateString('vi-VN') : undefined,
       }
-      setAuthUser(user)
+
       localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
+      if (data.refreshToken) {
+        localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
+      }
+
+      setAuthUser(user)
       setRegisterForm({ username: '', email: '', password: '', confirm: '' })
       setScreen('home')
-      setAuthLoading(false)
       showToast('Đăng ký thành công!')
-    }, 800)
+    } catch (error) {
+      setAuthError(getErrorMessage(error, 'Đăng ký thất bại'))
+    } finally {
+      setAuthLoading(false)
+    }
   }, [registerForm, showToast])
 
   const handleLogout = useCallback(() => {
     setAuthUser(null)
     localStorage.removeItem('dbAuthUser')
+    localStorage.removeItem(ACCESS_TOKEN_KEY)
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
     setScreen('auth')
     setAuthTab('login')
-    setLoginForm({ username: '', password: '' })
+    setLoginForm({ email: '', password: '' })
     setRegisterForm({ username: '', email: '', password: '', confirm: '' })
     setAuthError('')
     showToast('Đã đăng xuất')
@@ -1248,6 +1345,21 @@ function App() {
   useEffect(() => {
     stakeEthRef.current = stakeEth
   }, [stakeEth])
+
+  useEffect(() => {
+    if (!authUser) {
+      return
+    }
+
+    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY)
+    if (accessToken) {
+      return
+    }
+
+    setAuthUser(null)
+    setScreen('auth')
+    localStorage.removeItem('dbAuthUser')
+  }, [authUser])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode)
@@ -1330,12 +1442,12 @@ function App() {
               {authTab === 'login' && (
                 <div className="auth-form">
                   <div className="form-group">
-                    <label>TÊN NGƯỜI DÙNG</label>
+                    <label>EMAIL</label>
                     <input
-                      type="text"
-                      placeholder="username"
-                      value={loginForm.username}
-                      onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                      type="email"
+                      placeholder="email@example.com"
+                      value={loginForm.email}
+                      onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
                       disabled={authLoading}
                     />
                   </div>
@@ -1358,9 +1470,7 @@ function App() {
                   >
                     {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG NHẬP'}
                   </button>
-                  <div className="auth-demo">
-                    Demo: <span className="demo-link">demo / demo123</span>
-                  </div>
+                  <div className="auth-demo">Đăng nhập bằng email đã đăng ký trên backend.</div>
                 </div>
               )}
 
@@ -1728,16 +1838,24 @@ function App() {
               <div className="players-row">
                 <div className="player-slot">
                   <div className="slot-avatar p1">X</div>
-                  <div className="slot-name">Bạn</div>
+                  <div className="slot-name">
+                    {onlineAssignedPlayer === 'X' ? 'Bạn' : roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}
+                  </div>
                 </div>
                 <div className="vs-sep">VS</div>
                 <div className="player-slot">
                   <div className={`slot-avatar ${roomPlayers >= 2 ? 'p2' : 'empty'}`}>
                     {roomPlayers >= 2 ? 'O' : '?'}
                   </div>
-                  <div className="slot-name">{roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}</div>
+                  <div className="slot-name">
+                    {onlineAssignedPlayer === 'O' ? 'Bạn' : roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}
+                  </div>
                 </div>
               </div>
+            </div>
+
+            <div className="waiting-label waiting-role-label">
+              Vai trò của bạn: {onlineAssignedPlayer ?? 'Đang chờ server gán role'}
             </div>
 
             {roomCountdown !== null ? (
