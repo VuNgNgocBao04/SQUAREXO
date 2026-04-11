@@ -3,14 +3,8 @@ import type { AppEnv } from "../config/env";
 import { getPrismaClient } from "../db/prisma";
 import { logger } from "../config/logger";
 import { metrics } from "../observability/metrics";
-
-type SapphireWrapApi = {
-  wrapEthereumProvider: <T extends { request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown> }>(
-    upstream: T,
-  ) => T;
-};
-
-const sapphire = require("@oasisprotocol/sapphire-paratime") as SapphireWrapApi;
+// @ts-ignore - Node16 CommonJS build resolves this package via its CJS export at runtime.
+import * as sapphire from "@oasisprotocol/sapphire-paratime";
 
 const squarexoMatchAbi = [
   "function submitResult(string roomId, address winner) external",
@@ -65,12 +59,10 @@ export class BlockchainService {
     const contractAddress = env.CONTRACT_ADDRESS as string;
 
     const upstreamProvider = new ethers.JsonRpcProvider(rpcUrl);
-    const wrappedProvider = sapphire.wrapEthereumProvider({
-      request: async ({ method, params }) => upstreamProvider.send(method, Array.isArray(params) ? params : []),
-    });
-
-    const provider = new ethers.BrowserProvider(wrappedProvider);
-    const signer = new ethers.NonceManager(new ethers.Wallet(privateKey, provider));
+    const provider = sapphire.wrapEthereumProvider({
+      request: async ({ method, params }) => upstreamProvider.send(method, params as never),
+    }) as unknown as ethers.JsonRpcProvider;
+    const signer = new ethers.Wallet(privateKey, provider);
     this.contract = new ethers.Contract(contractAddress, squarexoMatchAbi, signer);
   }
 
