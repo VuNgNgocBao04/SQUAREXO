@@ -1,8 +1,10 @@
 import { ethers } from "ethers";
 import type { AppEnv } from "../config/env";
 import { getPrismaClient } from "../db/prisma";
-// @ts-ignore - Node16 CommonJS build resolves this package via its CJS export at runtime.
-import * as sapphire from "@oasisprotocol/sapphire-paratime";
+
+const { wrapEthersSigner } = require("@oasisprotocol/sapphire-ethers-v6/dist/_cjs/index.cjs") as {
+  wrapEthersSigner: (upstream: ethers.Wallet) => ethers.Wallet;
+};
 
 const squarexoMatchAbi = [
   "function submitResult(string roomId, address winner) external",
@@ -40,13 +42,8 @@ export class BlockchainService {
     const privateKey = env.BACKEND_SIGNER_PRIVATE_KEY as string;
     const contractAddress = env.CONTRACT_ADDRESS as string;
 
-    const upstreamProvider = new ethers.JsonRpcProvider(rpcUrl);
-    const provider = new ethers.BrowserProvider(
-      sapphire.wrapEthereumProvider({
-        request: async ({ method, params }) => upstreamProvider.send(method, params as never),
-      }),
-    );
-    const signer = new ethers.Wallet(privateKey, provider);
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const signer = wrapEthersSigner(new ethers.Wallet(privateKey, provider));
     this.contract = new ethers.Contract(contractAddress, squarexoMatchAbi, signer);
   }
 

@@ -10,6 +10,9 @@ importers:
 
   packages/backend:
     dependencies:
+      '@oasisprotocol/sapphire-ethers-v6':
+        specifier: ^6.0.1
+        version: 6.0.1(@oasisprotocol/sapphire-paratime@2.3.0)(ethers@6.16.0)(typescript@5.9.3)
       '@oasisprotocol/sapphire-paratime':
         specifier: ^2.3.0
         version: 2.3.0
@@ -1593,6 +1596,21 @@ packages:
 
   /@oasisprotocol/deoxysii@0.0.6:
     resolution: {integrity: sha512-TI51bIpChfsla9aRbjip6zvTbz6rpsqKgM7MqJvSfeFF6G5xLXQcbSC9u/1hOnOOazd7HaqA9NvaXQdeKCb3yw==}
+
+  /@oasisprotocol/sapphire-ethers-v6@6.0.1(@oasisprotocol/sapphire-paratime@2.3.0)(ethers@6.16.0)(typescript@5.9.3):
+    resolution: {integrity: sha512-JY1pKPByoboDNSQurP9Z0+QEvShK8Y9heqOjFQjhH6ZwYmiyJdhT+iJJvBtvsVzZ3SkFay0TXwQ+G5m+VBjJRA==}
+    peerDependencies:
+      '@oasisprotocol/sapphire-paratime': ^2.0.1
+      ethers: 6.x
+      typescript: '>=5.0.4'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+    dependencies:
+      '@oasisprotocol/sapphire-paratime': 2.3.0
+      ethers: 6.16.0
+      typescript: 5.9.3
+    dev: false
 
   /@oasisprotocol/sapphire-paratime@2.3.0:
     resolution: {integrity: sha512-TooQ+eGxz8kQJ4PavqkXxvjbRJw8V4TB/Nu5ptaMyclFFr+tCWXEpx01gpoRsUEEc9IRcEm4IfnBUqFnBcbt7w==}
