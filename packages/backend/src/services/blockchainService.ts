@@ -2,6 +2,14 @@ import { ethers } from "ethers";
 import type { AppEnv } from "../config/env";
 import { getPrismaClient } from "../db/prisma";
 
+type SapphireWrapApi = {
+  wrapEthereumProvider: <T extends { request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown> }>(
+    upstream: T,
+  ) => T;
+};
+
+const sapphire = require("@oasisprotocol/sapphire-paratime") as SapphireWrapApi;
+
 const squarexoMatchAbi = [
   "function submitResult(string roomId, address winner) external",
 ] as const;
@@ -38,7 +46,12 @@ export class BlockchainService {
     const privateKey = env.BACKEND_SIGNER_PRIVATE_KEY as string;
     const contractAddress = env.CONTRACT_ADDRESS as string;
 
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const upstreamProvider = new ethers.JsonRpcProvider(rpcUrl);
+    const wrappedProvider = sapphire.wrapEthereumProvider({
+      request: async ({ method, params }) => upstreamProvider.send(method, Array.isArray(params) ? params : []),
+    });
+
+    const provider = new ethers.BrowserProvider(wrappedProvider);
     const signer = new ethers.Wallet(privateKey, provider);
     this.contract = new ethers.Contract(contractAddress, squarexoMatchAbi, signer);
   }

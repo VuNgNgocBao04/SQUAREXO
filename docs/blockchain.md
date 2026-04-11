@@ -53,25 +53,25 @@ Contract o `packages/contracts/contracts/SquarexoMatch.sol` quan ly:
 
 ## 4) Deploy testnet
 
-1. Cai dependencies:
+Bước 1: Cai dependencies:
 
 ```bash
 pnpm install
 ```
 
-1. Build contract:
+Bước 2: Build contract:
 
 ```bash
 pnpm --filter contracts build
 ```
 
-1. Deploy len Sapphire testnet:
+Bước 3: Deploy len Sapphire testnet:
 
 ```bash
 pnpm --filter contracts deploy:testnet
 ```
 
-1. Lay contract address vua deploy, cap nhat vao:
+Bước 4: Lay contract address vua deploy, cap nhat vao:
 
 - `packages/backend/.env`
 - `packages/frontend/.env`

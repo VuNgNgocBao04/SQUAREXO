@@ -3,6 +3,7 @@ import { saveMatchIfFinished, type HandlerOptions } from "../../src/socket/handl
 import type { Room } from "../../src/room/roomManager";
 
 type SaveResultMock = HandlerOptions["matchService"]["saveResult"];
+type SubmitResultMock = HandlerOptions["blockchainService"]["submitResult"];
 
 function createFinishedRoom(): Room {
   return {
@@ -36,6 +37,7 @@ describe("saveMatchIfFinished", () => {
       .fn<SaveResultMock>()
       .mockRejectedValueOnce(new Error("DB down"))
       .mockResolvedValueOnce({ id: "match-1" });
+    const submitResult = vi.fn<SubmitResultMock>().mockResolvedValue({ submitted: false });
 
     const options: HandlerOptions = {
       roomManager: {
@@ -44,6 +46,9 @@ describe("saveMatchIfFinished", () => {
       publicBaseUrl: "http://localhost:3000",
       matchService: {
         saveResult,
+      } as never,
+      blockchainService: {
+        submitResult,
       } as never,
     };
 
@@ -60,6 +65,7 @@ describe("saveMatchIfFinished", () => {
   it("uses the total number of edges as totalMoves", async () => {
     const room = createFinishedRoom();
     const saveResult = vi.fn<SaveResultMock>().mockResolvedValue({ id: "match-2" });
+    const submitResult = vi.fn<SubmitResultMock>().mockResolvedValue({ submitted: false });
 
     const options: HandlerOptions = {
       roomManager: {
@@ -68,6 +74,9 @@ describe("saveMatchIfFinished", () => {
       publicBaseUrl: "http://localhost:3000",
       matchService: {
         saveResult,
+      } as never,
+      blockchainService: {
+        submitResult,
       } as never,
     };
 

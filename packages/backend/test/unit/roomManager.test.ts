@@ -5,6 +5,7 @@ const createTestGame = () => ({
   rows: 3,
   cols: 3,
   edges: [],
+  boxes: [],
   currentPlayer: "X" as const,
   score: { X: 0, O: 0 },
 });

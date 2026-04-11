@@ -127,6 +127,10 @@ function genRoomCode() {
   return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
 }
 
+function normalizeRoomId(roomId: string) {
+  return roomId.trim().toUpperCase()
+}
+
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL && typeof import.meta.env.VITE_BACKEND_URL === 'string'
     ? import.meta.env.VITE_BACKEND_URL
@@ -245,6 +249,7 @@ function App() {
   const totalMovesRef = useRef(0)
   const gameActiveRef = useRef(false)
   const gridSizeRef = useRef(3)
+  const roomCodeRef = useRef('')
   const roomPlayersRef = useRef(1)
   const gameModeRef = useRef<GameMode>('pvp')
   const stakeEthRef = useRef(0.01)
@@ -298,6 +303,11 @@ function App() {
   const updateRoomPlayers = useCallback((count: number) => {
     roomPlayersRef.current = count
     setRoomPlayers(count)
+  }, [])
+
+  const setRoomCodeSafe = useCallback((code: string) => {
+    roomCodeRef.current = code
+    setRoomCode(code)
   }, [])
 
   const stopMatchCountdown = useCallback(() => {
@@ -501,7 +511,7 @@ function App() {
 
     socket.on('room_info', (payload: RoomInfoPayload) => {
       const playerCount = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
-      setRoomCode(payload.roomId)
+      setRoomCodeSafe(payload.roomId)
       setOnlineAssignedPlayer(payload.assignedPlayer)
       updateRoomPlayers(playerCount)
       setIsOnlineMatch(true)
@@ -518,7 +528,7 @@ function App() {
     socket.on('player_joined', (payload: RoomInfoPayload) => {
       const count = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
       updateRoomPlayers(count)
-      setRoomCode(payload.roomId)
+      setRoomCodeSafe(payload.roomId)
       setIsOnlineMatch(true)
       if (payload.isFull || count >= 2) {
         startMatchCountdown()
@@ -534,7 +544,12 @@ function App() {
     })
 
     socket.on('chat_message', (payload: ChatMessagePayload) => {
-      if (payload.roomId !== roomCode && payload.roomId !== roomCode.trim().toUpperCase()) {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
         return
       }
 
@@ -554,7 +569,12 @@ function App() {
     })
 
     socket.on('match_settled', (payload: MatchSettledPayload) => {
-      if (payload.roomId !== roomCode && payload.roomId !== roomCode.trim().toUpperCase()) {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
         return
       }
 
@@ -594,7 +614,7 @@ function App() {
     getChatAuthor,
     hydrateFromServerState,
     isOnlineMatch,
-    roomCode,
+    setRoomCodeSafe,
     showToast,
     startMatchCountdown,
     stopMatchCountdown,
@@ -610,7 +630,7 @@ function App() {
         setOnlineAssignedPlayer(null)
         updateRoomPlayers(1)
         stopMatchCountdown()
-        setRoomCode(code)
+        setRoomCodeSafe(code)
         setScreen('waiting')
 
         socket.emit('join_room', {
@@ -623,7 +643,7 @@ function App() {
         showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
       }
     },
-    [connectOnlineSocket, showToast, stopMatchCountdown, updateRoomPlayers],
+    [connectOnlineSocket, setRoomCodeSafe, showToast, stopMatchCountdown, updateRoomPlayers],
   )
 
   const isGameOver = useCallback(() => {
@@ -986,6 +1006,7 @@ function App() {
 
   const startGame = useCallback(() => {
     setIsOnlineMatch(false)
+    setChainStatus('idle')
     endModalShownRef.current = false
     const empty = createEmptyState(gridSize)
     hLinesRef.current = empty.hLines
@@ -1021,12 +1042,14 @@ function App() {
     clearTimers()
     disconnectOnlineSocket()
     setIsOnlineMatch(false)
+    setChainStatus('idle')
     setRoomCountdown(null)
     setJoinCode('')
     setChatMsg('')
+    setRoomCodeSafe('')
     endModalShownRef.current = false
     setScreen('home')
-  }, [clearTimers, disconnectOnlineSocket])
+  }, [clearTimers, disconnectOnlineSocket, setRoomCodeSafe])
 
   const openSettings = useCallback(() => {
     if (screen !== 'settings') {
@@ -1062,6 +1085,18 @@ function App() {
     return { contract, browserProvider }
   }, [])
 
+  const refreshWalletBalance = useCallback(async () => {
+    if (!window.ethereum) {
+      return
+    }
+
+    const provider = new ethers.BrowserProvider(window.ethereum)
+    const signer = await provider.getSigner()
+    const address = await signer.getAddress()
+    const balanceWei = await provider.getBalance(address)
+    setWalletBalance(ethers.formatEther(balanceWei))
+  }, [])
+
   const lockStakeOnChain = useCallback(
     async (targetRoomId: string, mode: 'create' | 'join') => {
       const amount = stakeEthRef.current
@@ -1078,10 +1113,11 @@ function App() {
           ? await contract.createMatch(targetRoomId, value, { value })
           : await contract.joinMatch(targetRoomId, { value })
       await tx.wait()
+      await refreshWalletBalance()
       setChainStatus('playing')
       return String(tx.hash)
     },
-    [withContractSigner],
+    [refreshWalletBalance, withContractSigner],
   )
 
   const claimReward = useCallback(async () => {
@@ -1089,12 +1125,13 @@ function App() {
       const { contract } = await withContractSigner()
       const tx = await contract.claimReward(roomCode)
       await tx.wait()
+      await refreshWalletBalance()
       showToast(`Claim reward thành công: ${String(tx.hash).slice(0, 10)}...`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Claim reward thất bại'
       showToast(message)
     }
-  }, [roomCode, showToast, withContractSigner])
+  }, [refreshWalletBalance, roomCode, showToast, withContractSigner])
 
   const createRoom = useCallback(() => {
     const run = async () => {
@@ -1114,7 +1151,7 @@ function App() {
         return
       }
 
-      setRoomCode(code)
+      setRoomCodeSafe(code)
       updateRoomPlayers(1)
       setRoomChat([
         { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
@@ -1127,7 +1164,7 @@ function App() {
     }
 
     void run()
-  }, [joinOnlineRoom, lockStakeOnChain, showToast, updateRoomPlayers, walletConnected])
+  }, [joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
 
   const joinRoom = useCallback(() => {
     const run = async () => {
@@ -1151,7 +1188,7 @@ function App() {
         return
       }
 
-      setRoomCode(code)
+      setRoomCodeSafe(code)
       updateRoomPlayers(1)
       setRoomChat([
         { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
@@ -1165,7 +1202,7 @@ function App() {
     }
 
     void run()
-  }, [joinCode, joinOnlineRoom, lockStakeOnChain, showToast, updateRoomPlayers, walletConnected])
+  }, [joinCode, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
 
   const sendChat = useCallback(() => {
     const message = chatMsg.trim()
