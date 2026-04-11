@@ -2,10 +2,6 @@ import { ethers } from "ethers";
 import type { AppEnv } from "../config/env";
 import { getPrismaClient } from "../db/prisma";
 
-const { wrapEthersSigner } = require("@oasisprotocol/sapphire-ethers-v6/dist/_cjs/index.cjs") as {
-  wrapEthersSigner: (upstream: ethers.Wallet) => ethers.Wallet;
-};
-
 const squarexoMatchAbi = [
   "function submitResult(string roomId, address winner) external",
 ] as const;
@@ -28,7 +24,11 @@ export type SubmitResultOutput = {
 export class BlockchainService {
   private readonly prisma = getPrismaClient();
   private readonly enabled: boolean;
-  private readonly contract?: ethers.Contract;
+  private readonly rpcUrl?: string;
+  private readonly privateKey?: string;
+  private readonly contractAddress?: string;
+  private contract?: ethers.Contract;
+  private initializingContract?: Promise<ethers.Contract>;
 
   constructor(env: AppEnv) {
     const ready = Boolean(env.OASIS_RPC_URL && env.BACKEND_SIGNER_PRIVATE_KEY && env.CONTRACT_ADDRESS);
@@ -38,21 +38,55 @@ export class BlockchainService {
       return;
     }
 
-    const rpcUrl = env.OASIS_RPC_URL as string;
-    const privateKey = env.BACKEND_SIGNER_PRIVATE_KEY as string;
-    const contractAddress = env.CONTRACT_ADDRESS as string;
-
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const signer = wrapEthersSigner(new ethers.Wallet(privateKey, provider));
-    this.contract = new ethers.Contract(contractAddress, squarexoMatchAbi, signer);
+    this.rpcUrl = env.OASIS_RPC_URL as string;
+    this.privateKey = env.BACKEND_SIGNER_PRIVATE_KEY as string;
+    this.contractAddress = env.CONTRACT_ADDRESS as string;
   }
 
   isEnabled(): boolean {
     return this.enabled;
   }
 
+  private async getContract(): Promise<ethers.Contract | undefined> {
+    if (!this.enabled) {
+      return undefined;
+    }
+
+    if (this.contract) {
+      return this.contract;
+    }
+
+    if (!this.rpcUrl || !this.privateKey || !this.contractAddress) {
+      return undefined;
+    }
+
+    const rpcUrl = this.rpcUrl;
+    const privateKey = this.privateKey;
+    const contractAddress = this.contractAddress;
+
+    if (this.initializingContract) {
+      return this.initializingContract;
+    }
+
+    this.initializingContract = (async () => {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const wallet = new ethers.Wallet(privateKey, provider);
+      const sapphire = await import("@oasisprotocol/sapphire-ethers-v6");
+      const signer = sapphire.wrapEthersSigner(wallet as never) as unknown as ethers.ContractRunner;
+      return new ethers.Contract(contractAddress, squarexoMatchAbi, signer);
+    })();
+
+    try {
+      this.contract = await this.initializingContract;
+      return this.contract;
+    } finally {
+      this.initializingContract = undefined;
+    }
+  }
+
   async submitResult(input: SubmitResultInput): Promise<SubmitResultOutput> {
-    if (!this.enabled || !this.contract) {
+    const contract = await this.getContract();
+    if (!this.enabled || !contract) {
       return {
         submitted: false,
         reason: "blockchain_not_configured",
@@ -74,21 +108,21 @@ export class BlockchainService {
     const xWallet = playerX?.walletAddress ?? undefined;
     const oWallet = playerO?.walletAddress ?? undefined;
 
-    const winnerWallet =
-      input.scoreX > input.scoreO
-        ? xWallet
-        : input.scoreO > input.scoreX
-          ? oWallet
-          : ethers.ZeroAddress;
-
-    if (input.scoreX !== input.scoreO && !winnerWallet) {
-      return {
-        submitted: false,
-        reason: "winner_wallet_missing",
-      };
+    let winnerWallet: string;
+    if (input.scoreX === input.scoreO) {
+      winnerWallet = ethers.ZeroAddress;
+    } else {
+      const candidate = input.scoreX > input.scoreO ? xWallet : oWallet;
+      if (!candidate) {
+        return {
+          submitted: false,
+          reason: "winner_wallet_missing",
+        };
+      }
+      winnerWallet = candidate;
     }
 
-    const tx = await this.contract.submitResult(input.roomId, winnerWallet);
+    const tx = await contract.submitResult(input.roomId, winnerWallet);
     const receipt = await tx.wait();
 
     return {

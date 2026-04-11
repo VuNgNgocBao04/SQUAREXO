@@ -13,9 +13,6 @@ importers:
       '@oasisprotocol/sapphire-ethers-v6':
         specifier: ^6.0.1
         version: 6.0.1(@oasisprotocol/sapphire-paratime@2.3.0)(ethers@6.16.0)(typescript@5.9.3)
-      '@oasisprotocol/sapphire-paratime':
-        specifier: ^2.3.0
-        version: 2.3.0
       '@prisma/client':
         specifier: ^6.17.1
         version: 6.17.1(prisma@6.17.1)(typescript@5.9.3)
