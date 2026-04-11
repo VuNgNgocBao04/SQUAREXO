@@ -1,60 +1,70 @@
 # Production Readiness Audit Summary
 
-## Multiplayer 2-Player Mode
+## Current Estimate
 
-Current status:
+- Current readiness estimate: 88-91% for controlled production rollout.
+- Target 90-93% is realistic after finishing remaining frontend/auth + reliability tests + contract audit.
+- 95%+ still depends on real-world stability data (at least several weeks of clean operation).
 
-- Backend socket integration tests pass for join/move/state sync.
-- Frontend now supports realtime room join, state hydration, and waiting countdown.
+## Completed In This Hardening Round
 
-Main risks still present:
+### Security
 
-- No socket-level JWT authentication in realtime flow.
-- Large monolithic frontend component (`App.tsx`) increases regression risk.
+- Socket JWT policy is now environment-driven and production-safe.
+- `REQUIRE_SOCKET_JWT` defaults to `true` when `NODE_ENV=production`.
+- Guest socket identity fallback is now explicitly controlled by `ALLOW_GUEST_SOCKET_IN_DEV`.
 
-## Authentication & Session Quality
+### Blockchain Reliability
 
-Completed improvements:
+- Added retry/backoff for on-chain `submitResult` with configurable max attempts.
+- Added per-step timeout guard (fee fetch, gas estimate, send tx, wait receipt).
+- Added signer hardening with strict private key format validation (`0x` + 64 hex).
+- Added nonce manager wrapper for safer transaction sequencing.
+- Added in-process idempotency guard:
+   - de-duplicate in-flight submit by `roomId`
+   - cache settled result by `roomId` to reduce accidental duplicate submit.
 
-- Normalized email validation (lowercase + trim) in auth schemas.
-- Login password policy aligned (`min(6)` + `max(128)`).
-- Added logout endpoint: `POST /api/auth/logout`.
-- Added refresh-token revocation handling and tests.
-- Case-insensitive email lookup in user store.
+### Observability
 
-Remaining gaps:
+- Metrics now include:
+   - `blockchainSubmitSuccessCount`
+   - `blockchainSubmitFailureCount`
+   - `blockchainSubmitRetryCount`
+- Socket auth rejections now produce explicit warning logs with reason.
 
-- User store is in-memory only.
-- No persistent token/session storage yet.
-- Frontend auth flow remains mocked and should be replaced with real API integration.
+### Quality Validation
 
-## SOLID / Clean Code Snapshot
+- Backend build passes.
+- Backend test run (without coverage gate) passes: 85/85 tests.
 
-Strengths:
+## Remaining Gaps To Reach Stable 90-93%
 
-- Game logic isolated in `game-core`.
-- Runtime payload validation via zod.
-- Clear error contracts in backend.
+### Frontend / Architecture
 
-Weaknesses:
+- `frontend/src/App.tsx` is still monolithic and should be split by feature boundary.
+- Frontend auth flow still has mocked login/register behavior and must be switched to backend API + real token lifecycle.
 
-- `App.tsx` currently handles too many responsibilities.
-- Socket handler still combines orchestration + policy + telemetry.
+### Security
 
-## Potential Bug Surface
+- No completed third-party smart contract audit report yet.
+- Private key lifecycle should move to managed secret provider (Vault/KMS/HSM) in deployed environment.
 
-- Realtime reconnect edge cases require additional integration tests.
-- Chat event now exists but lacks dedicated integration test coverage.
+### Reliability
 
-## Recommended Next Refactor Steps
+- Missing end-to-end tests for full stake/join/settle/claim lifecycle.
+- Missing DB-chain reconciliation job and periodic drift reports.
+- Need explicit handling playbook for chain-side "already resolved" and delayed indexer visibility.
 
-1. Split frontend into feature modules:
-   - Auth
-   - Lobby/Room
-   - Match gameplay
-   - Chat
-2. Add socket auth middleware (token -> player identity binding).
-3. Add dedicated integration tests for:
-   - chat_message
-   - disconnect/reconnect during active turns
-4. Move user/auth persistence to a database-backed repository layer.
+### Operations / Release
+
+- Need staging parity checklist enforced per release.
+- Need load/chaos tests for reconnect and network partitions.
+- Need incident runbook and rollback execution drill.
+
+## Recommended Next Implementation Order
+
+1. Replace mocked frontend auth with real backend auth and socket token handshake.
+2. Add e2e for `stake -> join -> settle -> claim`, including reconnect/failure paths.
+3. Complete contract security audit and fix findings.
+4. Add DB-chain reconciliation worker + scheduled alerts.
+5. Run load test and chaos reconnect suite in staging identical to production.

@@ -12,6 +12,10 @@ function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string |
     return rawAuthToken;
   }
 
+  if (Array.isArray(authorizationHeader) && authorizationHeader.length > 0) {
+    return extractSocketToken(rawAuthToken, authorizationHeader[0]);
+  }
+
   if (typeof authorizationHeader === "string") {
     const [scheme, token] = authorizationHeader.split(" ");
     if (scheme === "Bearer" && token) {
@@ -64,10 +68,15 @@ export function createBackendServer(env: AppEnv): BackendServer {
 
   io.use((socket, next) => {
     const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
+    const guestAllowed = !env.REQUIRE_SOCKET_JWT && env.ALLOW_GUEST_SOCKET_IN_DEV;
 
     if (token) {
       const verified = tokenService.verifyAccessToken(token);
       if (verified.error || !verified.payload) {
+        logger.warn("socket_auth_rejected", {
+          reason: verified.error ?? "INVALID_TOKEN",
+          socketId: socket.id,
+        });
         next(new Error(verified.error ?? "INVALID_TOKEN"));
         return;
       }
@@ -77,8 +86,21 @@ export function createBackendServer(env: AppEnv): BackendServer {
       return;
     }
 
+    if (!guestAllowed) {
+      logger.warn("socket_auth_rejected", {
+        reason: "MISSING_TOKEN",
+        socketId: socket.id,
+      });
+      next(new Error("MISSING_TOKEN"));
+      return;
+    }
+
     const guestUser = buildGuestSocketUser(socket.handshake.auth?.playerId);
     if (!guestUser) {
+      logger.warn("socket_auth_rejected", {
+        reason: "MISSING_TOKEN",
+        socketId: socket.id,
+      });
       next(new Error("MISSING_TOKEN"));
       return;
     }

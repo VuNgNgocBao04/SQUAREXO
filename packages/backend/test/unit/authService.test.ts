@@ -13,10 +13,16 @@ describe("JwtTokenService", () => {
     JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
+    REQUIRE_SOCKET_JWT: true,
+    ALLOW_GUEST_SOCKET_IN_DEV: false,
     PUBLIC_BASE_URL: "http://localhost:3000",
     RECONNECT_TIMEOUT_MS: 30000,
     DEDUPE_WINDOW_MS: 15000,
     ROOM_SWEEP_INTERVAL_MS: 5000,
+    BLOCKCHAIN_SUBMIT_RETRY_MAX_ATTEMPTS: 2,
+    BLOCKCHAIN_SUBMIT_BASE_DELAY_MS: 100,
+    BLOCKCHAIN_TX_CONFIRMATIONS: 1,
+    BLOCKCHAIN_SUBMIT_TIMEOUT_MS: 5000,
   };
 
   const tokenService = new JwtTokenService(mockEnv);
