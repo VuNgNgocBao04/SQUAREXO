@@ -201,6 +201,17 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           });
         }
 
+        const hasActiveSameIdentity = [...room.socketToPlayerId.entries()].some(
+          ([trackedSocketId, trackedPlayerId]) => trackedSocketId !== socket.id && trackedPlayerId === playerId,
+        );
+        if (hasActiveSameIdentity) {
+          throw new ContractError(
+            ErrorCode.VALIDATION_ERROR,
+            "Player identity is already active in this room",
+            { roomId: room.roomId, playerId },
+          );
+        }
+
         const assignedPlayer = options.roomManager.assignSocket(room, socket.id, playerId);
         socketToRoom.set(socket.id, room.roomId);
         socket.join(room.roomId);

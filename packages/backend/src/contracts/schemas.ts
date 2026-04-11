@@ -16,6 +16,7 @@ export const joinRoomSchema = z.object({
   roomId: z.string().regex(roomIdRegex, "roomId must be 3-64 chars [a-zA-Z0-9_-]"),
   rows: z.number().int().min(1).max(12).optional(),
   cols: z.number().int().min(1).max(12).optional(),
+  playerId: z.string().min(1).max(128).optional(),
 }).strict();
 
 export const makeMoveSchema = z.object({
