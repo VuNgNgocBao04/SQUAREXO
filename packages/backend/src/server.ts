@@ -53,7 +53,7 @@ export type BackendServer = {
 };
 
 export function createBackendServer(env: AppEnv): BackendServer {
-  const { app, tokenService, matchService } = createApp(env);
+  const { app, tokenService, matchService, blockchainService } = createApp(env);
   const httpServer = createServer(app);
   const io = new IOServer(httpServer, {
     cors: {
@@ -97,6 +97,7 @@ export function createBackendServer(env: AppEnv): BackendServer {
     roomManager,
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${env.PORT}`,
     matchService,
+    blockchainService,
   });
 
   let closed = false;
