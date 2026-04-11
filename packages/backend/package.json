@@ -18,12 +18,10 @@
   "license": "ISC",
   "packageManager": "pnpm@10.32.1",
   "dependencies": {
-    "@oasisprotocol/sapphire-paratime": "^2.3.0",
     "@prisma/client": "^6.17.1",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.1",
-    "ethers": "^6.15.0",
     "express": "^5.2.1",
     "game-core": "workspace:*",
     "jsonwebtoken": "^9.0.3",

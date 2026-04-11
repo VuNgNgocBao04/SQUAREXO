@@ -11,7 +11,6 @@ export const SocketEvents = {
   PLAYER_LEFT: "player_left",
   ROOM_CLEANED: "room_cleaned",
   CHAT_MESSAGE_BROADCAST: "chat_message",
-  MATCH_SETTLED: "match_settled",
   ERROR: "error",
 } as const;
 

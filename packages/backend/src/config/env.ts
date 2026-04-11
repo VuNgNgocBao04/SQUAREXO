@@ -17,9 +17,6 @@ const envSchema = z.object({
   JWT_AUDIENCE: z.string().min(1).default("squarexo-clients"),
   JWT_EXPIRES_IN: z.string().default("7d"),
   REFRESH_TOKEN_EXPIRES_IN: z.string().default("30d"),
-  OASIS_RPC_URL: z.string().url().optional(),
-  BACKEND_SIGNER_PRIVATE_KEY: z.string().min(1).optional(),
-  CONTRACT_ADDRESS: z.string().min(1).optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
