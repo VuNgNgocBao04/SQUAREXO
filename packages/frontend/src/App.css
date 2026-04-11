@@ -723,6 +723,10 @@ body {
   margin-top: 16px;
 }
 
+.claim-reward-wrap {
+  margin-bottom: 10px;
+}
+
 .turn-pill-highlight {
   font-weight: 700;
 }
