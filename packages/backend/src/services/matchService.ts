@@ -118,7 +118,7 @@ export class MatchService {
             ? {
               create: input.moves.map((move) => ({
                 moveIndex: move.moveIndex,
-                edge: move.edge as unknown as Prisma.InputJsonValue,
+                edge: move.edge,
                 player: move.player,
                 createdAt: move.timestamp ?? new Date(),
               })),

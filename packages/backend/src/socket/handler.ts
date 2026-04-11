@@ -16,13 +16,11 @@ import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapt
 import { parsePayload } from "../utils/validation";
 import type { JwtPayload } from "../types/auth";
 import type { MatchService } from "../services/matchService";
-import type { BlockchainService } from "../services/blockchainService";
 
 export type HandlerOptions = {
   roomManager: RoomManager;
   publicBaseUrl: string;
   matchService: MatchService;
-  blockchainService: BlockchainService;
 };
 
 type SocketContext = {
@@ -114,11 +112,7 @@ function getSocketUser(socket: Socket): JwtPayload {
   return user;
 }
 
-export async function saveMatchIfFinished(
-  options: HandlerOptions,
-  roomId: string,
-  io?: Server,
-): Promise<void> {
+export async function saveMatchIfFinished(options: HandlerOptions, roomId: string): Promise<void> {
   const room = options.roomManager.getRoom(roomId);
   if (!room || room.matchSaved) {
     return;
@@ -143,35 +137,6 @@ export async function saveMatchIfFinished(
   // Optimistic flag ensures only first caller proceeds; others see true and return.
   room.matchSaved = true;
   try {
-    let txHash: string | undefined;
-    let chainResult:
-      | {
-          submitted: boolean;
-          txHash?: string;
-          winnerWallet?: string;
-          reason?: string;
-        }
-      | undefined;
-
-    try {
-      chainResult = await options.blockchainService.submitResult({
-        roomId,
-        playerXId,
-        playerOId,
-        scoreX: room.gameState.score.X,
-        scoreO: room.gameState.score.O,
-      });
-    } catch (chainError) {
-      logger.error("submit_result_onchain_failed", {
-        roomId,
-        error: chainError,
-      });
-    }
-
-    if (chainResult?.submitted) {
-      txHash = chainResult.txHash;
-    }
-
     await options.matchService.saveResult({
       roomId,
       playerXId,
@@ -181,18 +146,9 @@ export async function saveMatchIfFinished(
       totalMoves,
       scoreX: room.gameState.score.X,
       scoreO: room.gameState.score.O,
-      txHash,
       startedAt: room.matchStartedAt,
       endedAt: new Date(),
     });
-
-    if (chainResult?.submitted && io) {
-      io.to(roomId).emit(SocketEvents.MATCH_SETTLED, {
-        roomId,
-        txHash: chainResult.txHash,
-        winnerWallet: chainResult.winnerWallet ?? null,
-      });
-    }
   } catch (error) {
     // Revert flag on error so retry is possible
     room.matchSaved = false;
@@ -270,7 +226,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         // after game completed but match wasn't saved (e.g., prior save failed).
         // This ensures eventual save without requiring additional retry logic.
         try {
-          await saveMatchIfFinished(options, room.roomId, io);
+          await saveMatchIfFinished(options, room.roomId);
         } catch (error) {
           logger.error("save_match_failed", {
             roomId: room.roomId,
@@ -333,7 +289,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
 
           emitSnapshot(io, payload.roomId, nextState);
           try {
-            await saveMatchIfFinished(options, payload.roomId, io);
+            await saveMatchIfFinished(options, payload.roomId);
           } catch (error) {
             logger.error("save_match_failed", {
               roomId: payload.roomId,
@@ -401,7 +357,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         });
 
         try {
-          await saveMatchIfFinished(options, payload.roomId, io);
+          await saveMatchIfFinished(options, payload.roomId);
         } catch (error) {
           logger.error("save_match_failed", {
             roomId: payload.roomId,
