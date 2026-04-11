@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlayerSymbol {
+  X
+  O
+  DRAW
+}
+
+model User {
+  id            String  @id @default(uuid())
+  username      String  @unique
+  email         String  @unique
+  passwordHash  String
+  walletAddress String? @unique
+  avatarUrl     String?
+  elo           Int     @default(1000)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  matchesAsX    Match[] @relation("MatchPlayerX")
+  matchesAsO    Match[] @relation("MatchPlayerO")
+  wins          Match[] @relation("MatchWinner")
+}
+
+model Match {
+  id           String       @id @default(uuid())
+  roomId       String
+  playerXId    String
+  playerOId    String
+  winner       PlayerSymbol?
+  winnerUserId String?
+  boardRows    Int
+  boardCols    Int
+  totalMoves   Int
+  betAmount    Decimal?     @db.Decimal(18, 8)
+  txHash       String?
+  startedAt    DateTime
+  endedAt      DateTime
+  createdAt    DateTime     @default(now())
+
+  playerX      User         @relation("MatchPlayerX", fields: [playerXId], references: [id])
+  playerO      User         @relation("MatchPlayerO", fields: [playerOId], references: [id])
+  winnerUser   User?        @relation("MatchWinner", fields: [winnerUserId], references: [id])
+  moves        MatchMove[]
+
+  @@index([playerXId, endedAt])
+  @@index([playerOId, endedAt])
+  @@index([roomId, endedAt])
+}
+
+model MatchMove {
+  id        String       @id @default(uuid())
+  matchId   String
+  moveIndex Int
+  edge      Json
+  player    PlayerSymbol
+  createdAt DateTime     @default(now())
+
+  match     Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, moveIndex])
+  @@index([matchId, createdAt])
+}
