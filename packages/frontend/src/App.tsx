@@ -1229,7 +1229,7 @@ function App() {
 
       setWalletPending(true)
       try {
-        const browserProvider = new ethers.BrowserProvider(window.ethereum)
+        let browserProvider = new ethers.BrowserProvider(window.ethereum)
         let network = await browserProvider.getNetwork()
 
         if (network.chainId !== OASIS_CHAIN_ID) {
@@ -1256,6 +1256,7 @@ function App() {
               ],
             })
           }
+          browserProvider = new ethers.BrowserProvider(window.ethereum)
           network = await browserProvider.getNetwork()
         }
 
