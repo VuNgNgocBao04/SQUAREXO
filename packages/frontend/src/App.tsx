@@ -1123,7 +1123,7 @@ function App() {
   const claimReward = useCallback(async () => {
     try {
       const { contract } = await withContractSigner()
-      const tx = await contract.claimReward(roomCode)
+      const tx = await contract.claimReward(roomCodeRef.current)
       await tx.wait()
       await refreshWalletBalance()
       showToast(`Claim reward thành công: ${String(tx.hash).slice(0, 10)}...`)
@@ -1131,7 +1131,7 @@ function App() {
       const message = error instanceof Error ? error.message : 'Claim reward thất bại'
       showToast(message)
     }
-  }, [refreshWalletBalance, roomCode, showToast, withContractSigner])
+  }, [refreshWalletBalance, showToast, withContractSigner])
 
   const createRoom = useCallback(() => {
     const run = async () => {
