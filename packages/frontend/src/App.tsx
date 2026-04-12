@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { createGame, chooseAIMove, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
+import { ethers } from 'ethers'
+import * as sapphire from '@oasisprotocol/sapphire-paratime'
 import './App.css'
 
 type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
@@ -81,6 +83,22 @@ type SocketErrorPayload = {
   message: string
 }
 
+type MatchSettledPayload = {
+  roomId: string
+  txHash?: string
+  winnerWallet?: string | null
+}
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>
+}
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider
+  }
+}
+
 const DOT = 18
 const PAD = 32
 const SNAP = 20
@@ -109,10 +127,27 @@ function genRoomCode() {
   return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
 }
 
+function normalizeRoomId(roomId: string) {
+  return roomId.trim().toUpperCase()
+}
+
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL && typeof import.meta.env.VITE_BACKEND_URL === 'string'
     ? import.meta.env.VITE_BACKEND_URL
     : 'http://localhost:3000'
+
+const OASIS_CHAIN_ID = 0x5affn
+const OASIS_CHAIN_HEX = '0x5aff'
+const OASIS_CHAIN_NAME = 'Oasis Sapphire Testnet'
+const OASIS_RPC_URL =
+  (import.meta.env.VITE_OASIS_RPC_URL as string | undefined) ?? 'https://testnet.sapphire.oasis.io'
+const CONTRACT_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined) ?? ''
+
+const squarexoMatchAbi = [
+  'function createMatch(string roomId, uint256 betAmount) payable',
+  'function joinMatch(string roomId) payable',
+  'function claimReward(string roomId)',
+] as const
 
 function createRuntimePlayerId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -162,6 +197,8 @@ function App() {
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
   const [walletBalance, setWalletBalance] = useState('0.0000')
+  const [walletPending, setWalletPending] = useState(false)
+  const [chainStatus, setChainStatus] = useState<'idle' | 'staking' | 'playing' | 'settling' | 'settled'>('idle')
 
   const [currentPlayer, setCurrentPlayer] = useState(1)
   const [scores, setScores] = useState<[number, number]>([0, 0])
@@ -212,6 +249,7 @@ function App() {
   const totalMovesRef = useRef(0)
   const gameActiveRef = useRef(false)
   const gridSizeRef = useRef(3)
+  const roomCodeRef = useRef('')
   const roomPlayersRef = useRef(1)
   const gameModeRef = useRef<GameMode>('pvp')
   const stakeEthRef = useRef(0.01)
@@ -265,6 +303,11 @@ function App() {
   const updateRoomPlayers = useCallback((count: number) => {
     roomPlayersRef.current = count
     setRoomPlayers(count)
+  }, [])
+
+  const setRoomCodeSafe = useCallback((code: string) => {
+    roomCodeRef.current = code
+    setRoomCode(code)
   }, [])
 
   const stopMatchCountdown = useCallback(() => {
@@ -468,7 +511,7 @@ function App() {
 
     socket.on('room_info', (payload: RoomInfoPayload) => {
       const playerCount = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
-      setRoomCode(payload.roomId)
+      setRoomCodeSafe(payload.roomId)
       setOnlineAssignedPlayer(payload.assignedPlayer)
       updateRoomPlayers(playerCount)
       setIsOnlineMatch(true)
@@ -485,7 +528,7 @@ function App() {
     socket.on('player_joined', (payload: RoomInfoPayload) => {
       const count = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
       updateRoomPlayers(count)
-      setRoomCode(payload.roomId)
+      setRoomCodeSafe(payload.roomId)
       setIsOnlineMatch(true)
       if (payload.isFull || count >= 2) {
         startMatchCountdown()
@@ -501,7 +544,12 @@ function App() {
     })
 
     socket.on('chat_message', (payload: ChatMessagePayload) => {
-      if (payload.roomId !== roomCode && payload.roomId !== roomCode.trim().toUpperCase()) {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
         return
       }
 
@@ -518,6 +566,28 @@ function App() {
     socket.on('error', (payload: SocketErrorPayload) => {
       const message = payload?.code ? `[${payload.code}] ${payload.message}` : payload.message
       showToast(message)
+    })
+
+    socket.on('match_settled', (payload: MatchSettledPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setChainStatus('settled')
+      setModalState((prev) => ({
+        ...prev,
+        sub: 'Kết quả đã được backend ghi lên Oasis Sapphire thành công.',
+        tx: payload.txHash ? `Tx: ${payload.txHash}` : 'Tx: Đã ghi nhận on-chain',
+      }))
+
+      if (payload.txHash) {
+        showToast(`Match settled on-chain: ${payload.txHash.slice(0, 10)}...`)
+      }
     })
 
     socketRef.current = socket
@@ -544,7 +614,7 @@ function App() {
     getChatAuthor,
     hydrateFromServerState,
     isOnlineMatch,
-    roomCode,
+    setRoomCodeSafe,
     showToast,
     startMatchCountdown,
     stopMatchCountdown,
@@ -560,7 +630,7 @@ function App() {
         setOnlineAssignedPlayer(null)
         updateRoomPlayers(1)
         stopMatchCountdown()
-        setRoomCode(code)
+        setRoomCodeSafe(code)
         setScreen('waiting')
 
         socket.emit('join_room', {
@@ -573,7 +643,7 @@ function App() {
         showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
       }
     },
-    [connectOnlineSocket, showToast, stopMatchCountdown, updateRoomPlayers],
+    [connectOnlineSocket, setRoomCodeSafe, showToast, stopMatchCountdown, updateRoomPlayers],
   )
 
   const isGameOver = useCallback(() => {
@@ -846,20 +916,28 @@ function App() {
       spawnConfetti()
     }
 
+    setChainStatus(isOnlineMatch ? 'settling' : 'settled')
+
     setModalState({
       open: true,
       icon,
       title,
-      sub,
-      tx: 'Tx: Đang xử lý...',
+      sub: isOnlineMatch
+        ? 'Backend signer đang ghi kết quả on-chain lên Oasis Sapphire...'
+        : sub,
+      tx: isOnlineMatch ? 'Tx: Chờ backend xác nhận...' : 'Tx: Đang xử lý...',
     })
+
+    if (isOnlineMatch) {
+      return
+    }
 
     const delay = 1500 + Math.random() * 1000
     chainTimeoutRef.current = window.setTimeout(() => {
       const tx = genTxHash()
       setModalState((prev) => ({
         ...prev,
-        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ETH đã được chuyển.` : ''}`,
+        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ROSE đã được chuyển.` : ''}`,
         tx: `Tx: ${tx}`,
       }))
 
@@ -875,7 +953,7 @@ function App() {
         moves: totalMovesRef.current,
       })
     }, delay)
-  }, [saveHistory, spawnConfetti])
+  }, [isOnlineMatch, saveHistory, spawnConfetti])
 
   useEffect(() => {
     endGameRef.current = endGame
@@ -928,6 +1006,7 @@ function App() {
 
   const startGame = useCallback(() => {
     setIsOnlineMatch(false)
+    setChainStatus('idle')
     endModalShownRef.current = false
     const empty = createEmptyState(gridSize)
     hLinesRef.current = empty.hLines
@@ -963,12 +1042,14 @@ function App() {
     clearTimers()
     disconnectOnlineSocket()
     setIsOnlineMatch(false)
+    setChainStatus('idle')
     setRoomCountdown(null)
     setJoinCode('')
     setChatMsg('')
+    setRoomCodeSafe('')
     endModalShownRef.current = false
     setScreen('home')
-  }, [clearTimers, disconnectOnlineSocket])
+  }, [clearTimers, disconnectOnlineSocket, setRoomCodeSafe])
 
   const openSettings = useCallback(() => {
     if (screen !== 'settings') {
@@ -989,39 +1070,139 @@ function App() {
     setScreen('history')
   }, [])
 
-  const createRoom = useCallback(() => {
-    const code = genRoomCode()
-    setRoomCode(code)
-    updateRoomPlayers(1)
-    setRoomChat([
-      { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
-    ])
-    setRoomCountdown(null)
-    setGameMode('pvp')
-    setScreen('waiting')
-    setIsOnlineMatch(true)
-    void joinOnlineRoom(code)
-  }, [joinOnlineRoom])
+  const withContractSigner = useCallback(async () => {
+    if (!window.ethereum) {
+      throw new Error('Không có provider ví trong trình duyệt')
+    }
+    if (!CONTRACT_ADDRESS) {
+      throw new Error('Thiếu VITE_CONTRACT_ADDRESS')
+    }
 
-  const joinRoom = useCallback(() => {
-    if (!joinCode.trim()) {
-      showToast('Nhập mã phòng!')
+    const wrappedProvider = sapphire.wrapEthereumProvider(window.ethereum)
+    const browserProvider = new ethers.BrowserProvider(wrappedProvider)
+    const signer = await browserProvider.getSigner()
+    const contract = new ethers.Contract(CONTRACT_ADDRESS, squarexoMatchAbi, signer)
+    return { contract, browserProvider }
+  }, [])
+
+  const refreshWalletBalance = useCallback(async () => {
+    if (!window.ethereum) {
       return
     }
 
-    const code = joinCode.trim().toUpperCase()
-    setRoomCode(code)
-    updateRoomPlayers(1)
-    setRoomChat([
-      { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
-      { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
-    ])
-    setJoinCode('')
-    setGameMode('pvp')
-    setScreen('waiting')
-    setIsOnlineMatch(true)
-    void joinOnlineRoom(code)
-  }, [joinCode, joinOnlineRoom, showToast, updateRoomPlayers])
+    const provider = new ethers.BrowserProvider(window.ethereum)
+    const signer = await provider.getSigner()
+    const address = await signer.getAddress()
+    const balanceWei = await provider.getBalance(address)
+    setWalletBalance(ethers.formatEther(balanceWei))
+  }, [])
+
+  const lockStakeOnChain = useCallback(
+    async (targetRoomId: string, mode: 'create' | 'join') => {
+      const amount = stakeEthRef.current
+      if (amount <= 0) {
+        throw new Error('Stake phải lớn hơn 0')
+      }
+
+      const value = ethers.parseEther(amount.toString())
+      const { contract } = await withContractSigner()
+
+      setChainStatus('staking')
+      const tx =
+        mode === 'create'
+          ? await contract.createMatch(targetRoomId, value, { value })
+          : await contract.joinMatch(targetRoomId, { value })
+      await tx.wait()
+      await refreshWalletBalance()
+      setChainStatus('playing')
+      return String(tx.hash)
+    },
+    [refreshWalletBalance, withContractSigner],
+  )
+
+  const claimReward = useCallback(async () => {
+    try {
+      const { contract } = await withContractSigner()
+      const tx = await contract.claimReward(roomCodeRef.current)
+      await tx.wait()
+      await refreshWalletBalance()
+      showToast(`Claim reward thành công: ${String(tx.hash).slice(0, 10)}...`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Claim reward thất bại'
+      showToast(message)
+    }
+  }, [refreshWalletBalance, showToast, withContractSigner])
+
+  const createRoom = useCallback(() => {
+    const run = async () => {
+      if (!walletConnected) {
+        showToast('Hãy kết nối ví trước khi tạo phòng cược')
+        return
+      }
+
+      const code = genRoomCode()
+      try {
+        const txHash = await lockStakeOnChain(code, 'create')
+        showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không stake được khi tạo phòng'
+        showToast(message)
+        setChainStatus('idle')
+        return
+      }
+
+      setRoomCodeSafe(code)
+      updateRoomPlayers(1)
+      setRoomChat([
+        { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
+      ])
+      setRoomCountdown(null)
+      setGameMode('pvp')
+      setScreen('waiting')
+      setIsOnlineMatch(true)
+      void joinOnlineRoom(code)
+    }
+
+    void run()
+  }, [joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
+
+  const joinRoom = useCallback(() => {
+    const run = async () => {
+      if (!joinCode.trim()) {
+        showToast('Nhập mã phòng!')
+        return
+      }
+      if (!walletConnected) {
+        showToast('Hãy kết nối ví trước khi vào phòng cược')
+        return
+      }
+
+      const code = joinCode.trim().toUpperCase()
+      try {
+        const txHash = await lockStakeOnChain(code, 'join')
+        showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không stake được khi vào phòng'
+        showToast(message)
+        setChainStatus('idle')
+        return
+      }
+
+      setRoomCodeSafe(code)
+      updateRoomPlayers(1)
+      setRoomChat([
+        { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
+        { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
+      ])
+      setJoinCode('')
+      setGameMode('pvp')
+      setScreen('waiting')
+      setIsOnlineMatch(true)
+      void joinOnlineRoom(code)
+    }
+
+    void run()
+  }, [joinCode, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
 
   const sendChat = useCallback(() => {
     const message = chatMsg.trim()
@@ -1040,22 +1221,67 @@ function App() {
   }, [chatMsg, isOnlineMatch, onlineConnected, roomCode])
 
   const connectWallet = useCallback(() => {
-    const addr =
-      '0x' +
-      Array.from({ length: 4 }, () =>
-        Math.floor(Math.random() * 0xffff)
-          .toString(16)
-          .padStart(4, '0'),
-      ).join('') +
-      '...'
-    const balance = (Math.random() * 2 + 0.1).toFixed(4)
+    const connect = async () => {
+      if (!window.ethereum) {
+        showToast('Không tìm thấy MetaMask/WalletConnect provider trong trình duyệt')
+        return
+      }
 
-    window.setTimeout(() => {
-      setWalletConnected(true)
-      setWalletAddress(addr)
-      setWalletBalance(balance)
-      showToast('Kết nối ví thành công!')
-    }, 1200)
+      setWalletPending(true)
+      try {
+        let browserProvider = new ethers.BrowserProvider(window.ethereum)
+        let network = await browserProvider.getNetwork()
+
+        if (network.chainId !== OASIS_CHAIN_ID) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: OASIS_CHAIN_HEX }],
+            })
+          } catch {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: OASIS_CHAIN_HEX,
+                  chainName: OASIS_CHAIN_NAME,
+                  nativeCurrency: {
+                    name: 'Test ROSE',
+                    symbol: 'ROSE',
+                    decimals: 18,
+                  },
+                  rpcUrls: [OASIS_RPC_URL],
+                  blockExplorerUrls: ['https://explorer.oasis.io/testnet/sapphire'],
+                },
+              ],
+            })
+          }
+          browserProvider = new ethers.BrowserProvider(window.ethereum)
+          network = await browserProvider.getNetwork()
+        }
+
+        if (network.chainId !== OASIS_CHAIN_ID) {
+          throw new Error('Network chưa được chuyển sang Oasis Sapphire Testnet')
+        }
+
+        await window.ethereum.request({ method: 'eth_requestAccounts' })
+        const signer = await browserProvider.getSigner()
+        const address = await signer.getAddress()
+        const balanceWei = await browserProvider.getBalance(address)
+
+        setWalletConnected(true)
+        setWalletAddress(`${address.slice(0, 8)}...${address.slice(-6)}`)
+        setWalletBalance(ethers.formatEther(balanceWei))
+        showToast('Kết nối ví thành công trên Oasis Sapphire Testnet')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không thể kết nối ví'
+        showToast(message)
+      } finally {
+        setWalletPending(false)
+      }
+    }
+
+    void connect()
   }, [showToast])
 
   const playAgain = useCallback(() => {
@@ -1449,14 +1675,14 @@ function App() {
                 <button
                   className="btn-ghost connect-btn"
                   onClick={connectWallet}
-                  disabled={walletConnected}
+                  disabled={walletConnected || walletPending}
                 >
-                  {walletConnected ? '✓ Đã kết nối' : 'Kết Nối'}
+                  {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
                 </button>
               </div>
               {walletConnected && (
                 <div className="wallet-balance">
-                  Số dư: <span className="balance-val">{walletBalance}</span> ETH · <span className="network-val">Sepolia</span>
+                  Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                 </div>
               )}
             </div>
@@ -1480,19 +1706,19 @@ function App() {
               </div>
 
               <div className="row">
-                <label>Stake (ETH)</label>
+                <label>Stake (ROSE)</label>
                 <div className="stake-wrap">
                   <input
                     className="stake-inp"
                     type="number"
                     min="0"
                     step="0.001"
-                    title="Stake amount in ETH"
+                    title="Stake amount in ROSE"
                     placeholder="0.001"
                     value={stakeEth}
                     onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                   />
-                  <span className="stake-unit">ETH</span>
+                  <span className="stake-unit">ROSE</span>
                 </div>
               </div>
 
@@ -1605,7 +1831,7 @@ function App() {
                 </div>
                 <div className="profile-stat">
                   <div className="profile-stat-value">{totalEth.toFixed(3)}</div>
-                  <div className="profile-stat-label">Tổng Stake ETH</div>
+                  <div className="profile-stat-label">Tổng Stake ROSE</div>
                 </div>
               </div>
 
@@ -1614,14 +1840,14 @@ function App() {
                 <div className="profile-wallet-row">
                   <span className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
                   <span className="profile-wallet-address">{walletAddress}</span>
-                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected}>
-                    {walletConnected ? '✓ Đã kết nối' : 'Kết Nối'}
+                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected || walletPending}>
+                    {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
                   </button>
                 </div>
                 <div className="profile-wallet-meta">
                   {walletConnected ? (
                     <>
-                      Số dư: <span className="balance-val">{walletBalance}</span> ETH · <span className="network-val">Sepolia</span>
+                      Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                     </>
                   ) : (
                     'Chưa kết nối ví'
@@ -1670,19 +1896,19 @@ function App() {
                   </div>
                 </div>
                 <div className="row">
-                  <label>Stake (ETH)</label>
+                  <label>Stake (ROSE)</label>
                   <div className="stake-wrap">
                     <input
                       className="stake-inp"
                       type="number"
                       min="0"
                       step="0.001"
-                      title="Stake amount in ETH"
+                      title="Stake amount in ROSE"
                       placeholder="0.001"
                       value={stakeEth}
                       onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                     />
-                    <span className="stake-unit">ETH</span>
+                    <span className="stake-unit">ROSE</span>
                   </div>
                 </div>
                 <button className="btn-primary room-create-btn" onClick={createRoom}>⚡ TẠO PHÒNG</button>
@@ -1795,14 +2021,22 @@ function App() {
             <div className="ticker">
               <div className="ticker-item"><span className="t-lbl">Block</span><span className="t-val green">#{blockNum.toLocaleString()}</span></div>
               <span className="t-sep">|</span>
-              <div className="ticker-item"><span className="t-lbl">Stake</span><span className="t-val gold">{stakeEth.toFixed(3)} ETH</span></div>
+              <div className="ticker-item"><span className="t-lbl">Stake</span><span className="t-val gold">{stakeEth.toFixed(3)} ROSE</span></div>
               <span className="t-sep">|</span>
               <div className="ticker-item"><span className="t-lbl">Gas</span><span className="t-val pink">12 gwei</span></div>
               <span className="t-sep">|</span>
               <div className="ticker-item"><span className="t-lbl">Moves</span><span className="t-val green">{totalMoves}</span></div>
               <span className="t-sep">|</span>
-              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">0x4a2f...c3e1</span></div>
+              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{CONTRACT_ADDRESS ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Chưa cấu hình'}</span></div>
             </div>
+
+            {isOnlineMatch && chainStatus === 'settled' && (
+              <div className="claim-reward-wrap">
+                <button className="btn-ghost" onClick={() => void claimReward()}>
+                  Claim Reward On-chain
+                </button>
+              </div>
+            )}
 
             <div className="turn-pill">
               Lượt:{' '}
@@ -1838,7 +2072,7 @@ function App() {
               <div>
                 <div className="h-title">⬡ Lịch Sử On-Chain</div>
                 <div className="history-chain-sub">
-                  Sepolia Testnet · Smart Contract 0x4a2f...c3e1
+                  Oasis Sapphire Testnet · Smart Contract {CONTRACT_ADDRESS ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa cấu hình'}
                 </div>
               </div>
               <button className="btn-ghost" onClick={goHome}>← Quay Lại</button>
@@ -1846,7 +2080,7 @@ function App() {
 
             <div className="stats-row">
               <div className="stat-card"><div className="s-val c1">{gameHistory.length}</div><div className="s-lbl">Ván Đã Chơi</div></div>
-              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ETH</div></div>
+              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ROSE</div></div>
               <div className="stat-card"><div className="s-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div><div className="s-lbl">Win Rate X</div></div>
             </div>
 
