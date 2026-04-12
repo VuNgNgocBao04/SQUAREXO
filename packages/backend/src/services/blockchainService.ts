@@ -1,10 +1,45 @@
-import { ethers } from "ethers";
+import { ZeroAddress } from "ethers";
 import type { AppEnv } from "../config/env";
 import { getPrismaClient } from "../db/prisma";
 
 const squarexoMatchAbi = [
   "function submitResult(string roomId, address winner) external",
 ] as const;
+
+type BlockchainContractConfig = {
+  rpcUrl: string;
+  privateKey: string;
+  contractAddress: string;
+};
+
+type BlockchainTransactionReceipt = {
+  hash?: string;
+};
+
+type BlockchainTransaction = {
+  hash: string;
+  wait(): Promise<BlockchainTransactionReceipt | null | undefined>;
+};
+
+export type BlockchainContract = {
+  submitResult(roomId: string, winner: string): Promise<BlockchainTransaction>;
+};
+
+export type BlockchainServiceDeps = {
+  prisma?: ReturnType<typeof getPrismaClient>;
+  contractFactory?: (config: BlockchainContractConfig) => Promise<BlockchainContract>;
+};
+
+export async function createSquarexoContract(
+  config: BlockchainContractConfig,
+): Promise<BlockchainContract> {
+  const ethersModule = await import("ethers");
+  const provider = new ethersModule.JsonRpcProvider(config.rpcUrl);
+  const wallet = new ethersModule.Wallet(config.privateKey, provider);
+  const sapphire = await import("@oasisprotocol/sapphire-ethers-v6");
+  const signer = sapphire.wrapEthersSigner(wallet);
+  return new ethersModule.Contract(config.contractAddress, squarexoMatchAbi, signer) as unknown as BlockchainContract;
+}
 
 export type SubmitResultInput = {
   roomId: string;
@@ -22,66 +57,37 @@ export type SubmitResultOutput = {
 };
 
 export class BlockchainService {
-  private readonly prisma = getPrismaClient();
+  private readonly prisma: ReturnType<typeof getPrismaClient>;
   private readonly enabled: boolean;
-  private readonly rpcUrl?: string;
-  private readonly privateKey?: string;
-  private readonly contractAddress?: string;
-  private contract?: ethers.Contract;
-  private initializingContract?: Promise<ethers.Contract>;
+  private readonly contractPromise?: Promise<BlockchainContract>;
 
-  constructor(env: AppEnv) {
+  constructor(env: AppEnv, deps: BlockchainServiceDeps = {}) {
     const ready = Boolean(env.OASIS_RPC_URL && env.BACKEND_SIGNER_PRIVATE_KEY && env.CONTRACT_ADDRESS);
     this.enabled = ready;
+    this.prisma = deps.prisma ?? getPrismaClient();
 
     if (!ready) {
       return;
     }
 
-    this.rpcUrl = env.OASIS_RPC_URL as string;
-    this.privateKey = env.BACKEND_SIGNER_PRIVATE_KEY as string;
-    this.contractAddress = env.CONTRACT_ADDRESS as string;
+    const contractFactory = deps.contractFactory ?? createSquarexoContract;
+    this.contractPromise = contractFactory({
+      rpcUrl: env.OASIS_RPC_URL as string,
+      privateKey: env.BACKEND_SIGNER_PRIVATE_KEY as string,
+      contractAddress: env.CONTRACT_ADDRESS as string,
+    });
   }
 
   isEnabled(): boolean {
     return this.enabled;
   }
 
-  private async getContract(): Promise<ethers.Contract | undefined> {
-    if (!this.enabled) {
+  private async getContract(): Promise<BlockchainContract | undefined> {
+    if (!this.enabled || !this.contractPromise) {
       return undefined;
     }
 
-    if (this.contract) {
-      return this.contract;
-    }
-
-    if (!this.rpcUrl || !this.privateKey || !this.contractAddress) {
-      return undefined;
-    }
-
-    const rpcUrl = this.rpcUrl;
-    const privateKey = this.privateKey;
-    const contractAddress = this.contractAddress;
-
-    if (this.initializingContract) {
-      return this.initializingContract;
-    }
-
-    this.initializingContract = (async () => {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const wallet = new ethers.Wallet(privateKey, provider);
-      const sapphire = await import("@oasisprotocol/sapphire-ethers-v6");
-      const signer = sapphire.wrapEthersSigner(wallet as never) as unknown as ethers.ContractRunner;
-      return new ethers.Contract(contractAddress, squarexoMatchAbi, signer);
-    })();
-
-    try {
-      this.contract = await this.initializingContract;
-      return this.contract;
-    } finally {
-      this.initializingContract = undefined;
-    }
+    return this.contractPromise;
   }
 
   async submitResult(input: SubmitResultInput): Promise<SubmitResultOutput> {
@@ -110,7 +116,7 @@ export class BlockchainService {
 
     let winnerWallet: string;
     if (input.scoreX === input.scoreO) {
-      winnerWallet = ethers.ZeroAddress;
+      winnerWallet = ZeroAddress;
     } else {
       const candidate = input.scoreX > input.scoreO ? xWallet : oWallet;
       if (!candidate) {
@@ -128,7 +134,7 @@ export class BlockchainService {
     return {
       submitted: true,
       txHash: receipt?.hash ?? tx.hash,
-      winnerWallet: winnerWallet && winnerWallet !== ethers.ZeroAddress ? winnerWallet : undefined,
+      winnerWallet: winnerWallet && winnerWallet !== ZeroAddress ? winnerWallet : undefined,
     };
   }
 }
