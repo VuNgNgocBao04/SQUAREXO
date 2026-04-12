@@ -1,6 +1,7 @@
 name: Create AI Mode + Milestone + NFT Issues
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - copilot/add-ai-game-mode
