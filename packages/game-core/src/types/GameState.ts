@@ -11,10 +11,17 @@ export interface Edge {
     takenBy?: Player;
 }
 
+export interface Box {
+    row: number;
+    col: number;
+    owner: Player;
+}
+
 export interface GameState {
     rows: number;
     cols: number;
     edges: Edge[];
+    boxes: Box[];
     currentPlayer: Player;
     score: Record<Player, number>;
 }

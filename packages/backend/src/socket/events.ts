@@ -1,5 +1,6 @@
 export { SocketEvents } from "../contracts/events";
 export type {
+  ChatMessagePayload,
   JoinRoomPayload,
   MakeMovePayload,
   ResetGamePayload,

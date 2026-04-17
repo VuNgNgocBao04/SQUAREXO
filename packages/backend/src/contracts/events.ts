@@ -3,6 +3,7 @@ export const SocketEvents = {
   MAKE_MOVE: "make_move",
   RESET_GAME: "reset_game",
   SYNC_STATE: "sync_state",
+  CHAT_MESSAGE: "chat_message",
 
   ROOM_INFO: "room_info",
   GAME_STATE: "game_state",

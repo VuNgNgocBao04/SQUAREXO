@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
-import { createGame, chooseAIMove, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
+import { createGame, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
 import './App.css'
 
 type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
@@ -72,6 +72,7 @@ type GameStatePayload = {
 type ChatMessagePayload = {
   roomId: string
   playerId: string
+  player?: OnlinePlayer
   message: string
   sentAt: number
 }
@@ -125,8 +126,29 @@ const BACKEND_URL =
     ? import.meta.env.VITE_BACKEND_URL
     : 'http://localhost:3000'
 
-const ACCESS_TOKEN_KEY = 'dbAccessToken'
-const REFRESH_TOKEN_KEY = 'dbRefreshToken'
+const ACCESS_TOKEN_KEY = 'squarexo-access-token'
+const REFRESH_TOKEN_KEY = 'squarexo-refresh-token'
+const USER_KEY = 'squarexo-user'
+
+const LEGACY_ACCESS_TOKEN_KEY = 'dbAccessToken'
+const LEGACY_REFRESH_TOKEN_KEY = 'dbRefreshToken'
+const LEGACY_USER_KEY = 'dbAuthUser'
+
+function shortenAddress(address: string): string {
+  if (address.length <= 12) return address
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
+
+function parseEthFromHexWei(hexWei: string): string {
+  const wei = BigInt(hexWei)
+  const whole = wei / 10n ** 18n
+  const fraction = (wei % 10n ** 18n).toString().padStart(18, '0').slice(0, 4)
+  return `${whole}.${fraction}`
+}
+
+function getStoredAccessToken(): string | null {
+  return localStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY)
+}
 
 function createRuntimePlayerId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -140,6 +162,19 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return error.message
   }
   return fallback
+}
+
+function chooseAIMove(state: CoreGameState): CoreEdge | null {
+  for (const edge of state.edges) {
+    if (!edge.takenBy) {
+      return {
+        from: edge.from,
+        to: edge.to,
+      }
+    }
+  }
+
+  return null
 }
 
 async function requestAuth(path: string, payload: Record<string, unknown>): Promise<AuthApiResponse> {
@@ -176,7 +211,7 @@ function App() {
   // Auth state
   const [authUser, setAuthUser] = useState<User | null>(() => {
     try {
-      const saved = localStorage.getItem('dbAuthUser')
+      const saved = localStorage.getItem(USER_KEY) || localStorage.getItem(LEGACY_USER_KEY)
       return saved ? (JSON.parse(saved) as User) : null
     } catch {
       return null
@@ -208,6 +243,7 @@ function App() {
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
   const [walletBalance, setWalletBalance] = useState('0.0000')
+  const [walletConnecting, setWalletConnecting] = useState(false)
 
   const [currentPlayer, setCurrentPlayer] = useState(1)
   const [scores, setScores] = useState<[number, number]>([0, 0])
@@ -360,12 +396,20 @@ function App() {
     }, 1000)
   }, [])
 
-  const getChatAuthor = useCallback((playerId: string) => {
-    if (playerId === clientPlayerIdRef.current) {
-      return 'Bạn'
-    }
-    return 'Đối thủ'
-  }, [])
+  const getChatAuthor = useCallback(
+    (payload: ChatMessagePayload) => {
+      if (payload.player && onlineAssignedPlayer && payload.player === onlineAssignedPlayer) {
+        return 'Bạn'
+      }
+
+      if (payload.playerId === clientPlayerIdRef.current) {
+        return 'Bạn'
+      }
+
+      return 'Đối thủ'
+    },
+    [onlineAssignedPlayer],
+  )
 
   const edgeToLine = useCallback((edge: CoreEdge): Line => {
     if (edge.from.row === edge.to.row) {
@@ -500,7 +544,7 @@ function App() {
   const connectOnlineSocket = useCallback(async () => {
     disconnectOnlineSocket()
 
-    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY)
+    const accessToken = getStoredAccessToken()
     if (!accessToken) {
       throw new Error('Phiên đăng nhập đã hết. Vui lòng đăng nhập lại để vào phòng online.')
     }
@@ -517,6 +561,12 @@ function App() {
 
     socket.on('connect', () => {
       setOnlineConnected(true)
+      const activeRoomCode = activeRoomCodeRef.current
+      if (activeRoomCode) {
+        socket.emit('sync_state', {
+          roomId: activeRoomCode,
+        })
+      }
     })
 
     socket.on('disconnect', () => {
@@ -570,8 +620,8 @@ function App() {
       setRoomChat((prev) => [
         ...prev,
         {
-          id: payload.sentAt,
-          user: getChatAuthor(payload.playerId),
+          id: payload.sentAt + prev.length + 1,
+          user: getChatAuthor(payload),
           msg: payload.message,
         },
       ])
@@ -629,7 +679,14 @@ function App() {
           roomId: code.trim().toUpperCase(),
           rows: gridSizeRef.current,
           cols: gridSizeRef.current,
+          playerId: clientPlayerIdRef.current,
         })
+
+        window.setTimeout(() => {
+          socket.emit('sync_state', {
+            roomId: code.trim().toUpperCase(),
+          })
+        }, 350)
       } catch (error) {
         showToast(getErrorMessage(error, 'Không kết nối được server realtime. Kiểm tra backend và thử lại.'))
       }
@@ -1102,24 +1159,55 @@ function App() {
     setChatMsg('')
   }, [chatMsg, isOnlineMatch, onlineConnected])
 
-  const connectWallet = useCallback(() => {
-    const addr =
-      '0x' +
-      Array.from({ length: 4 }, () =>
-        Math.floor(Math.random() * 0xffff)
-          .toString(16)
-          .padStart(4, '0'),
-      ).join('') +
-      '...'
-    const balance = (Math.random() * 2 + 0.1).toFixed(4)
+  const resetWalletState = useCallback(() => {
+    setWalletConnected(false)
+    setWalletAddress('Chưa kết nối')
+    setWalletBalance('0.0000')
+  }, [])
 
-    window.setTimeout(() => {
+  const syncWalletState = useCallback(
+    async (accounts: string[], announceSuccess = false) => {
+      const provider = window.ethereum
+      if (!provider || !accounts.length) {
+        resetWalletState()
+        return
+      }
+
+      const activeAddress = accounts[0]
+      const balanceHex = await provider.request<string>({
+        method: 'eth_getBalance',
+        params: [activeAddress, 'latest'],
+      })
+
       setWalletConnected(true)
-      setWalletAddress(addr)
-      setWalletBalance(balance)
-      showToast('Kết nối ví thành công!')
-    }, 1200)
-  }, [showToast])
+      setWalletAddress(shortenAddress(activeAddress))
+      setWalletBalance(parseEthFromHexWei(balanceHex))
+
+      if (announceSuccess) {
+        showToast('Kết nối ví thành công!')
+      }
+    },
+    [resetWalletState, showToast],
+  )
+
+  const connectWallet = useCallback(async () => {
+    const provider = window.ethereum
+    if (!provider) {
+      showToast('Không tìm thấy ví Web3. Hãy cài MetaMask và thử lại.')
+      return
+    }
+
+    setWalletConnecting(true)
+    try {
+      const accounts = await provider.request<string[]>({ method: 'eth_requestAccounts' })
+      await syncWalletState(accounts, true)
+    } catch (error) {
+      const message = getErrorMessage(error, 'Không thể kết nối ví')
+      showToast(message)
+    } finally {
+      setWalletConnecting(false)
+    }
+  }, [showToast, syncWalletState])
 
   const playAgain = useCallback(() => {
     setModalState((prev) => ({ ...prev, open: false }))
@@ -1254,11 +1342,14 @@ function App() {
         joinedDate: data.user.createdAt ? new Date(data.user.createdAt).toLocaleDateString('vi-VN') : undefined,
       }
 
-      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
       localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
       if (data.refreshToken) {
         localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
       }
+      localStorage.removeItem(LEGACY_USER_KEY)
+      localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
+      localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY)
 
       setAuthUser(user)
       setLoginForm({ email: '', password: '' })
@@ -1302,11 +1393,14 @@ function App() {
         joinedDate: data.user.createdAt ? new Date(data.user.createdAt).toLocaleDateString('vi-VN') : undefined,
       }
 
-      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
       localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
       if (data.refreshToken) {
         localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
       }
+      localStorage.removeItem(LEGACY_USER_KEY)
+      localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
+      localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY)
 
       setAuthUser(user)
       setRegisterForm({ username: '', email: '', password: '', confirm: '' })
@@ -1320,17 +1414,22 @@ function App() {
   }, [registerForm, showToast])
 
   const handleLogout = useCallback(() => {
+    disconnectOnlineSocket()
+    setIsOnlineMatch(false)
     setAuthUser(null)
-    localStorage.removeItem('dbAuthUser')
+    localStorage.removeItem(USER_KEY)
     localStorage.removeItem(ACCESS_TOKEN_KEY)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
+    localStorage.removeItem(LEGACY_USER_KEY)
+    localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
+    localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY)
     setScreen('auth')
     setAuthTab('login')
     setLoginForm({ email: '', password: '' })
     setRegisterForm({ username: '', email: '', password: '', confirm: '' })
     setAuthError('')
     showToast('Đã đăng xuất')
-  }, [showToast])
+  }, [disconnectOnlineSocket, showToast])
 
   useEffect(() => {
     gridSizeRef.current = gridSize
@@ -1351,15 +1450,33 @@ function App() {
       return
     }
 
-    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY)
+    const accessToken = getStoredAccessToken()
     if (accessToken) {
       return
     }
 
     setAuthUser(null)
     setScreen('auth')
-    localStorage.removeItem('dbAuthUser')
+    localStorage.removeItem(USER_KEY)
+    localStorage.removeItem(LEGACY_USER_KEY)
   }, [authUser])
+
+  useEffect(() => {
+    const legacyAccessToken = localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY)
+    if (legacyAccessToken && !localStorage.getItem(ACCESS_TOKEN_KEY)) {
+      localStorage.setItem(ACCESS_TOKEN_KEY, legacyAccessToken)
+    }
+
+    const legacyRefreshToken = localStorage.getItem(LEGACY_REFRESH_TOKEN_KEY)
+    if (legacyRefreshToken && !localStorage.getItem(REFRESH_TOKEN_KEY)) {
+      localStorage.setItem(REFRESH_TOKEN_KEY, legacyRefreshToken)
+    }
+
+    const legacyUser = localStorage.getItem(LEGACY_USER_KEY)
+    if (legacyUser && !localStorage.getItem(USER_KEY)) {
+      localStorage.setItem(USER_KEY, legacyUser)
+    }
+  }, [])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode)
@@ -1390,6 +1507,48 @@ function App() {
       }
     }
   }, [clearTimers, disconnectOnlineSocket])
+
+  useEffect(() => {
+    const provider = window.ethereum
+    if (!provider) {
+      return
+    }
+
+    void provider
+      .request<string[]>({ method: 'eth_accounts' })
+      .then((accounts) => syncWalletState(accounts))
+      .catch(() => {
+        resetWalletState()
+      })
+
+    const handleAccountsChanged = (payload: unknown) => {
+      const accounts = Array.isArray(payload) ? (payload as string[]) : []
+      void syncWalletState(accounts)
+    }
+
+    const handleChainChanged = () => {
+      void provider
+        .request<string[]>({ method: 'eth_accounts' })
+        .then((accounts) => syncWalletState(accounts))
+        .catch(() => {
+          resetWalletState()
+        })
+    }
+
+    const handleDisconnect = () => {
+      resetWalletState()
+    }
+
+    provider.on?.('accountsChanged', handleAccountsChanged)
+    provider.on?.('chainChanged', handleChainChanged)
+    provider.on?.('disconnect', handleDisconnect)
+
+    return () => {
+      provider.removeListener?.('accountsChanged', handleAccountsChanged)
+      provider.removeListener?.('chainChanged', handleChainChanged)
+      provider.removeListener?.('disconnect', handleDisconnect)
+    }
+  }, [resetWalletState, syncWalletState])
 
   return (
     <div className="db-app">
@@ -1559,9 +1718,9 @@ function App() {
                 <button
                   className="btn-ghost connect-btn"
                   onClick={connectWallet}
-                  disabled={walletConnected}
+                  disabled={walletConnected || walletConnecting}
                 >
-                  {walletConnected ? '✓ Đã kết nối' : 'Kết Nối'}
+                  {walletConnected ? '✓ Đã kết nối' : walletConnecting ? 'Đang kết nối...' : 'Kết Nối'}
                 </button>
               </div>
               {walletConnected && (
@@ -1724,8 +1883,8 @@ function App() {
                 <div className="profile-wallet-row">
                   <span className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
                   <span className="profile-wallet-address">{walletAddress}</span>
-                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected}>
-                    {walletConnected ? '✓ Đã kết nối' : 'Kết Nối'}
+                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected || walletConnecting}>
+                    {walletConnected ? '✓ Đã kết nối' : walletConnecting ? 'Đang kết nối...' : 'Kết Nối'}
                   </button>
                 </div>
                 <div className="profile-wallet-meta">

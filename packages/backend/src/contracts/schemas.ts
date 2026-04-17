@@ -34,6 +34,11 @@ export const syncStateSchema = z.object({
   roomId: z.string().regex(roomIdRegex),
 });
 
+export const chatMessageSchema = z.object({
+  roomId: z.string().regex(roomIdRegex),
+  message: z.string().trim().min(1).max(500),
+});
+
 // Auth schemas
 export const registerSchema = z.object({
   username: z.string().min(3).max(50),
@@ -55,6 +60,7 @@ export type JoinRoomPayload = z.infer<typeof joinRoomSchema>;
 export type MakeMovePayload = z.infer<typeof makeMoveSchema>;
 export type ResetGamePayload = z.infer<typeof resetGameSchema>;
 export type SyncStatePayload = z.infer<typeof syncStateSchema>;
+export type ChatMessagePayload = z.infer<typeof chatMessageSchema>;
 export type RegisterPayload = z.infer<typeof registerSchema>;
 export type LoginPayload = z.infer<typeof loginSchema>;
 export type RefreshTokenPayload = z.infer<typeof refreshTokenSchema>;

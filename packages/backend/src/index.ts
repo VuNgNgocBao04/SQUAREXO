@@ -1,6 +1,23 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { config as loadDotenv } from "dotenv";
 import { loadEnv } from "./config/env";
 import { logger } from "./config/logger";
 import { startBackendServer } from "./server";
+
+const envCandidates = [
+  resolve(process.cwd(), ".env"),
+  resolve(process.cwd(), "config", ".env"),
+  resolve(__dirname, "..", ".env"),
+  resolve(__dirname, "..", "config", ".env"),
+];
+
+for (const envPath of envCandidates) {
+  if (existsSync(envPath)) {
+    loadDotenv({ path: envPath, override: false });
+    break;
+  }
+}
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
