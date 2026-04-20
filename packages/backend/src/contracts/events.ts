@@ -8,6 +8,7 @@ export const SocketEvents = {
   ROOM_INFO: "room_info",
   GAME_STATE: "game_state",
   PLAYER_JOINED: "player_joined",
+  GAME_OVER: "game_over",
   PLAYER_LEFT: "player_left",
   ROOM_CLEANED: "room_cleaned",
   CHAT_MESSAGE_BROADCAST: "chat_message",

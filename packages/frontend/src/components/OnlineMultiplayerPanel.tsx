@@ -417,6 +417,9 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
   const joinRoom = useCallback(
     (mode: 'create' | 'join') => {
       const socket = socketRef.current || connectSocket()
+      if (!socket) {
+        return
+      }
       const nextRoomId = roomId.trim() || makeId('room')
 
       setRoomId(nextRoomId)

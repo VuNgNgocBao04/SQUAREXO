@@ -7,6 +7,7 @@ export interface User {
   walletAddress?: string; // For blockchain integration
   avatarUrl?: string;
   elo?: number;
+  lastLoginAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { loadEnv } from "./config/env";
 import { logger } from "./config/logger";
+import { closeDatabaseConnection, initDatabaseConnection } from "./db/prisma";
 import { startBackendServer } from "./server";
 
 const envCandidates = [
@@ -21,6 +22,7 @@ for (const envPath of envCandidates) {
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
+  await initDatabaseConnection();
   const server = await startBackendServer(env);
 
   let shuttingDown = false;
@@ -33,6 +35,7 @@ async function bootstrap(): Promise<void> {
     logger.info("graceful_shutdown_start", { signal });
     try {
       await server.close();
+      await closeDatabaseConnection();
       logger.info("graceful_shutdown_done", { signal });
       process.exit(0);
     } catch (error) {

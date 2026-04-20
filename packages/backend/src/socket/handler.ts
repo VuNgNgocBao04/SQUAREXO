@@ -13,10 +13,10 @@ import {
 import { metrics } from "../observability/metrics";
 import type { RoomManager } from "../room/roomManager";
 import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
+import type { BlockchainService } from "../services/blockchainService";
 import { parsePayload } from "../utils/validation";
 import type { JwtPayload } from "../types/auth";
 import type { MatchService } from "../services/matchService";
-import type { BlockchainService } from "../services/blockchainService";
 
 export type HandlerOptions = {
   roomManager: RoomManager;

@@ -89,14 +89,41 @@ type MatchSettledPayload = {
   winnerWallet?: string | null
 }
 
-type EthereumProvider = {
-  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>
+type ServerHistoryRecord = {
+  id: string
+  roomId: string
+  playerX: string
+  playerO: string
+  winnerPlayer: 'X' | 'O' | 'draw'
+  scoreX: number
+  scoreO: number
+  totalMoves: number
+  gridSize: number
+  gameMode: GameMode
+  stakeRose: number
+  txHash?: string
+  startedAt: string
+  endedAt: string
+  createdAt?: string
 }
 
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider
-  }
+type HistorySyncPayload = {
+  wallet: string
+  items: Array<{
+    roomId: string
+    playerX?: string
+    playerO?: string
+    winnerPlayer: 'X' | 'O' | 'draw'
+    scoreX: number
+    scoreO: number
+    totalMoves: number
+    gridSize: number
+    gameMode: GameMode
+    stakeRose: number
+    txHash?: string
+    startedAt?: string
+    endedAt: string
+  }>
 }
 
 const DOT = 18
@@ -264,6 +291,90 @@ function App() {
       setToast(null)
     }, 3000)
   }, [])
+
+  const readLocalHistory = useCallback((): HistoryRecord[] => {
+    try {
+      const raw = localStorage.getItem('dbChainHistory')
+      return raw ? (JSON.parse(raw) as HistoryRecord[]) : []
+    } catch {
+      return []
+    }
+  }, [])
+
+  const saveLocalHistory = useCallback((records: HistoryRecord[]) => {
+    localStorage.setItem('dbChainHistory', JSON.stringify(records))
+  }, [])
+
+  const toServerHistoryItem = useCallback((record: HistoryRecord) => {
+    const winnerPlayer: 'X' | 'O' | 'draw' = record.winner === 1 ? 'X' : record.winner === 2 ? 'O' : 'draw'
+    return {
+      roomId: record.id.toString(),
+      playerX: 'local-player-x',
+      playerO: 'local-player-o',
+      winnerPlayer,
+      scoreX: record.scores[0],
+      scoreO: record.scores[1],
+      totalMoves: record.moves,
+      gridSize: record.gridSize,
+      gameMode: record.mode,
+      stakeRose: record.stake,
+      txHash: record.tx,
+      startedAt: new Date(Date.now() - 60000).toISOString(),
+      endedAt: new Date(record.date).toISOString(),
+    }
+  }, [])
+
+  const fromServerHistoryRecord = useCallback((record: ServerHistoryRecord): HistoryRecord => {
+    const winner = record.winnerPlayer === 'X' ? 1 : record.winnerPlayer === 'O' ? 2 : 0
+    return {
+      id: Number.parseInt(record.id.replace(/\D/g, '').slice(0, 12) || `${Date.now()}`, 10),
+      date: new Date(record.endedAt).toLocaleString('vi-VN'),
+      gridSize: record.gridSize,
+      mode: record.gameMode,
+      scores: [record.scoreX, record.scoreO],
+      winner,
+      stake: record.stakeRose,
+      tx: record.txHash || 'Tx: N/A',
+      moves: record.totalMoves,
+    }
+  }, [])
+
+  const syncPendingHistoryToServer = useCallback(
+    async (wallet: string) => {
+      const pending = readLocalHistory()
+      if (!pending.length) {
+        return
+      }
+
+      const payload: HistorySyncPayload = {
+        wallet,
+        items: pending.map((record) => toServerHistoryItem(record)),
+      }
+
+      const response = await fetch(`${BACKEND_URL}/api/history/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error(`History sync failed (${response.status})`)
+      }
+
+      localStorage.removeItem('dbChainHistory')
+    },
+    [readLocalHistory, toServerHistoryItem],
+  )
+
+  const fetchHistoryFromServer = useCallback(async (wallet: string) => {
+    const response = await fetch(`${BACKEND_URL}/api/history?wallet=${encodeURIComponent(wallet)}`)
+    if (!response.ok) {
+      throw new Error(`History fetch failed (${response.status})`)
+    }
+
+    const data = (await response.json()) as { items?: ServerHistoryRecord[] }
+    return Array.isArray(data.items) ? data.items.map(fromServerHistoryRecord) : []
+  }, [fromServerHistoryRecord])
 
   const setCurrentPlayerSafe = useCallback((player: number) => {
     currentPlayerRef.current = player
@@ -863,10 +974,10 @@ function App() {
   const saveHistory = useCallback((record: HistoryRecord) => {
     setGameHistory((prev) => {
       const next = [record, ...prev].slice(0, 50)
-      localStorage.setItem('dbChainHistory', JSON.stringify(next))
+      saveLocalHistory(next)
       return next
     })
-  }, [])
+  }, [saveLocalHistory])
 
   const spawnConfetti = useCallback(() => {
     const colors = ['#00f5ff', '#ff006e', '#7b2fff', '#ffd60a', '#ffffff']
@@ -1078,7 +1189,7 @@ function App() {
       throw new Error('Thiếu VITE_CONTRACT_ADDRESS')
     }
 
-    const wrappedProvider = sapphire.wrapEthereumProvider(window.ethereum)
+    const wrappedProvider = sapphire.wrapEthereumProvider(window.ethereum as any)
     const browserProvider = new ethers.BrowserProvider(wrappedProvider)
     const signer = await browserProvider.getSigner()
     const contract = new ethers.Contract(CONTRACT_ADDRESS, squarexoMatchAbi, signer)
@@ -1269,6 +1380,22 @@ function App() {
         const address = await signer.getAddress()
         const balanceWei = await browserProvider.getBalance(address)
 
+        try {
+          await syncPendingHistoryToServer(address)
+        } catch (error) {
+          console.error('Failed to sync pending history', error)
+        }
+
+        try {
+          const remoteHistory = await fetchHistoryFromServer(address)
+          if (remoteHistory.length > 0) {
+            setGameHistory(remoteHistory)
+            saveLocalHistory(remoteHistory)
+          }
+        } catch (error) {
+          console.error('Failed to fetch history from server', error)
+        }
+
         setWalletConnected(true)
         setWalletAddress(`${address.slice(0, 8)}...${address.slice(-6)}`)
         setWalletBalance(ethers.formatEther(balanceWei))
@@ -1282,7 +1409,7 @@ function App() {
     }
 
     void connect()
-  }, [showToast])
+  }, [fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
 
   const playAgain = useCallback(() => {
     setModalState((prev) => ({ ...prev, open: false }))
