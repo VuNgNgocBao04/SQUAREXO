@@ -163,11 +163,52 @@ const BACKEND_URL =
     ? import.meta.env.VITE_BACKEND_URL
     : 'http://localhost:3000'
 
-const OASIS_CHAIN_ID = 0x5affn
-const OASIS_CHAIN_HEX = '0x5aff'
-const OASIS_CHAIN_NAME = 'Oasis Sapphire Testnet'
-const OASIS_RPC_URL =
-  (import.meta.env.VITE_OASIS_RPC_URL as string | undefined) ?? 'https://testnet.sapphire.oasis.io'
+type OasisNetworkKey = 'testnet' | 'mainnet'
+
+type OasisNetworkConfig = {
+  chainId: bigint
+  chainHex: string
+  chainName: string
+  currencyName: string
+  rpcUrls: string[]
+  blockExplorerUrls: string[]
+}
+
+const OASIS_NETWORKS: Record<OasisNetworkKey, OasisNetworkConfig> = {
+  testnet: {
+    chainId: 0x5affn,
+    chainHex: '0x5aff',
+    chainName: 'Oasis Sapphire Testnet',
+    currencyName: 'Test ROSE',
+    rpcUrls: ['https://testnet.sapphire.oasis.io'],
+    blockExplorerUrls: ['https://explorer.oasis.io/testnet/sapphire'],
+  },
+  mainnet: {
+    chainId: 0x5afen,
+    chainHex: '0x5afe',
+    chainName: 'Oasis Sapphire',
+    currencyName: 'ROSE',
+    rpcUrls: ['https://sapphire.oasis.io'],
+    blockExplorerUrls: ['https://explorer.oasis.io/mainnet/sapphire'],
+  },
+}
+
+const selectedOasisNetwork: OasisNetworkKey = import.meta.env.VITE_OASIS_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
+const baseOasisNetworkConfig = OASIS_NETWORKS[selectedOasisNetwork]
+const configuredRpcUrls = [
+  import.meta.env.VITE_OASIS_RPC_URL,
+  ...(import.meta.env.VITE_OASIS_RPC_FALLBACK_URLS ?? '').split(',').map((item) => item.trim()),
+]
+  .filter((item): item is string => typeof item === 'string' && item.length > 0)
+
+const OASIS_CONFIG: OasisNetworkConfig = {
+  ...baseOasisNetworkConfig,
+  rpcUrls: configuredRpcUrls.length > 0 ? Array.from(new Set(configuredRpcUrls)) : baseOasisNetworkConfig.rpcUrls,
+}
+
+const OASIS_CHAIN_ID = OASIS_CONFIG.chainId
+const OASIS_CHAIN_HEX = OASIS_CONFIG.chainHex
+const OASIS_CHAIN_NAME = OASIS_CONFIG.chainName
 const CONTRACT_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined) ?? ''
 
 const squarexoMatchAbi = [
@@ -1357,12 +1398,12 @@ function App() {
                   chainId: OASIS_CHAIN_HEX,
                   chainName: OASIS_CHAIN_NAME,
                   nativeCurrency: {
-                    name: 'Test ROSE',
+                    name: OASIS_CONFIG.currencyName,
                     symbol: 'ROSE',
                     decimals: 18,
                   },
-                  rpcUrls: [OASIS_RPC_URL],
-                  blockExplorerUrls: ['https://explorer.oasis.io/testnet/sapphire'],
+                  rpcUrls: OASIS_CONFIG.rpcUrls,
+                  blockExplorerUrls: OASIS_CONFIG.blockExplorerUrls,
                 },
               ],
             })
@@ -1372,7 +1413,7 @@ function App() {
         }
 
         if (network.chainId !== OASIS_CHAIN_ID) {
-          throw new Error('Network chưa được chuyển sang Oasis Sapphire Testnet')
+          throw new Error(`Network chưa được chuyển sang ${OASIS_CHAIN_NAME}`)
         }
 
         await window.ethereum.request({ method: 'eth_requestAccounts' })
@@ -1399,7 +1440,7 @@ function App() {
         setWalletConnected(true)
         setWalletAddress(`${address.slice(0, 8)}...${address.slice(-6)}`)
         setWalletBalance(ethers.formatEther(balanceWei))
-        showToast('Kết nối ví thành công trên Oasis Sapphire Testnet')
+        showToast(`Kết nối ví thành công trên ${OASIS_CHAIN_NAME}`)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Không thể kết nối ví'
         showToast(message)
@@ -1410,6 +1451,39 @@ function App() {
 
     void connect()
   }, [fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
+
+  useEffect(() => {
+    const ethereum = window.ethereum
+    if (!ethereum?.on || !ethereum.removeListener) {
+      return
+    }
+
+    const onAccountsChanged = (accounts: unknown) => {
+      if (!Array.isArray(accounts) || accounts.length === 0 || typeof accounts[0] !== 'string') {
+        setWalletConnected(false)
+        setWalletAddress('Chưa kết nối')
+        setWalletBalance('0.0000')
+        return
+      }
+
+      const account = accounts[0]
+      setWalletConnected(true)
+      setWalletAddress(`${account.slice(0, 8)}...${account.slice(-6)}`)
+      void refreshWalletBalance()
+    }
+
+    const onChainChanged = (_chainIdHex: unknown) => {
+      void refreshWalletBalance()
+    }
+
+    ethereum.on('accountsChanged', onAccountsChanged)
+    ethereum.on('chainChanged', onChainChanged)
+
+    return () => {
+      ethereum.removeListener?.('accountsChanged', onAccountsChanged)
+      ethereum.removeListener?.('chainChanged', onChainChanged)
+    }
+  }, [refreshWalletBalance])
 
   const playAgain = useCallback(() => {
     setModalState((prev) => ({ ...prev, open: false }))

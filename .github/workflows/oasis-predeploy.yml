@@ -1,0 +1,78 @@
+name: oasis-predeploy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build backend
+        run: pnpm --filter backend build
+
+      - name: Build frontend
+        run: pnpm --filter frontend build
+
+      - name: Compile contracts
+        run: pnpm --filter contracts build
+
+      - name: Run contract security tests
+        run: pnpm --filter contracts test
+
+  deploy-testnet:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: oasis-testnet
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy to Sapphire testnet
+        working-directory: packages/contracts
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          BACKEND_SIGNER_ADDRESS: ${{ secrets.BACKEND_SIGNER_ADDRESS }}
+          OASIS_RPC_URL: ${{ secrets.OASIS_TESTNET_RPC_URL }}
+          MATCH_JOIN_TIMEOUT_SECONDS: "900"
+          MATCH_RESULT_TIMEOUT_SECONDS: "3600"
+        run: pnpm deploy:testnet

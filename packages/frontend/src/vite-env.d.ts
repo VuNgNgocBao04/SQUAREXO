@@ -2,6 +2,10 @@
 
 interface ImportMetaEnv {
   readonly VITE_BACKEND_URL?: string
+  readonly VITE_OASIS_NETWORK?: 'testnet' | 'mainnet'
+  readonly VITE_OASIS_RPC_URL?: string
+  readonly VITE_OASIS_RPC_FALLBACK_URLS?: string
+  readonly VITE_CONTRACT_ADDRESS?: string
 }
 
 interface ImportMeta {
