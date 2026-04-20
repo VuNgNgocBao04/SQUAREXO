@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
-import { createGame, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
+import { createGame, chooseAIMove, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
+import { ethers } from 'ethers'
+import * as sapphire from '@oasisprotocol/sapphire-paratime'
 import './App.css'
 
 type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
@@ -72,7 +74,6 @@ type GameStatePayload = {
 type ChatMessagePayload = {
   roomId: string
   playerId: string
-  player?: OnlinePlayer
   message: string
   sentAt: number
 }
@@ -82,14 +83,19 @@ type SocketErrorPayload = {
   message: string
 }
 
-type AuthApiResponse = {
-  accessToken: string
-  refreshToken?: string
-  user: {
-    id: string
-    username: string
-    email: string
-    createdAt?: string
+type MatchSettledPayload = {
+  roomId: string
+  txHash?: string
+  winnerWallet?: string | null
+}
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>
+}
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider
   }
 }
 
@@ -121,85 +127,33 @@ function genRoomCode() {
   return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
 }
 
+function normalizeRoomId(roomId: string) {
+  return roomId.trim().toUpperCase()
+}
+
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL && typeof import.meta.env.VITE_BACKEND_URL === 'string'
     ? import.meta.env.VITE_BACKEND_URL
     : 'http://localhost:3000'
 
-const ACCESS_TOKEN_KEY = 'squarexo-access-token'
-const REFRESH_TOKEN_KEY = 'squarexo-refresh-token'
-const USER_KEY = 'squarexo-user'
+const OASIS_CHAIN_ID = 0x5affn
+const OASIS_CHAIN_HEX = '0x5aff'
+const OASIS_CHAIN_NAME = 'Oasis Sapphire Testnet'
+const OASIS_RPC_URL =
+  (import.meta.env.VITE_OASIS_RPC_URL as string | undefined) ?? 'https://testnet.sapphire.oasis.io'
+const CONTRACT_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined) ?? ''
 
-const LEGACY_ACCESS_TOKEN_KEY = 'dbAccessToken'
-const LEGACY_REFRESH_TOKEN_KEY = 'dbRefreshToken'
-const LEGACY_USER_KEY = 'dbAuthUser'
-
-function shortenAddress(address: string): string {
-  if (address.length <= 12) return address
-  return `${address.slice(0, 6)}...${address.slice(-4)}`
-}
-
-function parseEthFromHexWei(hexWei: string): string {
-  const wei = BigInt(hexWei)
-  const whole = wei / 10n ** 18n
-  const fraction = (wei % 10n ** 18n).toString().padStart(18, '0').slice(0, 4)
-  return `${whole}.${fraction}`
-}
-
-function getStoredAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY)
-}
+const squarexoMatchAbi = [
+  'function createMatch(string roomId, uint256 betAmount) payable',
+  'function joinMatch(string roomId) payable',
+  'function claimReward(string roomId)',
+] as const
 
 function createRuntimePlayerId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `player_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
   }
   return `player_${Math.random().toString(36).slice(2, 14)}`
-}
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) {
-    return error.message
-  }
-  return fallback
-}
-
-function chooseAIMove(state: CoreGameState): CoreEdge | null {
-  for (const edge of state.edges) {
-    if (!edge.takenBy) {
-      return {
-        from: edge.from,
-        to: edge.to,
-      }
-    }
-  }
-
-  return null
-}
-
-async function requestAuth(path: string, payload: Record<string, unknown>): Promise<AuthApiResponse> {
-  const response = await fetch(`${BACKEND_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  })
-
-  const raw = (await response.json().catch(() => null)) as
-    | AuthApiResponse
-    | { error?: string; code?: string; message?: string }
-    | null
-
-  if (!response.ok || !raw || typeof raw !== 'object' || !('accessToken' in raw) || !('user' in raw)) {
-    const message =
-      (raw && typeof raw === 'object' && 'error' in raw && typeof raw.error === 'string' && raw.error) ||
-      (raw && typeof raw === 'object' && 'message' in raw && typeof raw.message === 'string' && raw.message) ||
-      `Auth request failed (${response.status})`
-    throw new Error(message)
-  }
-
-  return raw as AuthApiResponse
 }
 
 function App() {
@@ -211,14 +165,14 @@ function App() {
   // Auth state
   const [authUser, setAuthUser] = useState<User | null>(() => {
     try {
-      const saved = localStorage.getItem(USER_KEY) || localStorage.getItem(LEGACY_USER_KEY)
+      const saved = localStorage.getItem('dbAuthUser')
       return saved ? (JSON.parse(saved) as User) : null
     } catch {
       return null
     }
   })
   const [authTab, setAuthTab] = useState<AuthTab>('login')
-  const [loginForm, setLoginForm] = useState({ email: '', password: '' })
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '', confirm: '' })
   const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
@@ -243,7 +197,8 @@ function App() {
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
   const [walletBalance, setWalletBalance] = useState('0.0000')
-  const [walletConnecting, setWalletConnecting] = useState(false)
+  const [walletPending, setWalletPending] = useState(false)
+  const [chainStatus, setChainStatus] = useState<'idle' | 'staking' | 'playing' | 'settling' | 'settled'>('idle')
 
   const [currentPlayer, setCurrentPlayer] = useState(1)
   const [scores, setScores] = useState<[number, number]>([0, 0])
@@ -294,17 +249,11 @@ function App() {
   const totalMovesRef = useRef(0)
   const gameActiveRef = useRef(false)
   const gridSizeRef = useRef(3)
+  const roomCodeRef = useRef('')
   const roomPlayersRef = useRef(1)
   const gameModeRef = useRef<GameMode>('pvp')
   const stakeEthRef = useRef(0.01)
   const clientPlayerIdRef = useRef(createRuntimePlayerId())
-  const activeRoomCodeRef = useRef('')
-
-  const setActiveRoomCode = useCallback((code: string) => {
-    const normalized = code.trim().toUpperCase()
-    activeRoomCodeRef.current = normalized
-    setRoomCode(normalized)
-  }, [])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -356,6 +305,11 @@ function App() {
     setRoomPlayers(count)
   }, [])
 
+  const setRoomCodeSafe = useCallback((code: string) => {
+    roomCodeRef.current = code
+    setRoomCode(code)
+  }, [])
+
   const stopMatchCountdown = useCallback(() => {
     if (countdownRef.current) {
       window.clearInterval(countdownRef.current)
@@ -396,20 +350,12 @@ function App() {
     }, 1000)
   }, [])
 
-  const getChatAuthor = useCallback(
-    (payload: ChatMessagePayload) => {
-      if (payload.player && onlineAssignedPlayer && payload.player === onlineAssignedPlayer) {
-        return 'Bạn'
-      }
-
-      if (payload.playerId === clientPlayerIdRef.current) {
-        return 'Bạn'
-      }
-
-      return 'Đối thủ'
-    },
-    [onlineAssignedPlayer],
-  )
+  const getChatAuthor = useCallback((playerId: string) => {
+    if (playerId === clientPlayerIdRef.current) {
+      return 'Bạn'
+    }
+    return 'Đối thủ'
+  }, [])
 
   const edgeToLine = useCallback((edge: CoreEdge): Line => {
     if (edge.from.row === edge.to.row) {
@@ -544,29 +490,15 @@ function App() {
   const connectOnlineSocket = useCallback(async () => {
     disconnectOnlineSocket()
 
-    const accessToken = getStoredAccessToken()
-    if (!accessToken) {
-      throw new Error('Phiên đăng nhập đã hết. Vui lòng đăng nhập lại để vào phòng online.')
-    }
-
     const socket = io(BACKEND_URL, {
       transports: ['websocket'],
       timeout: 5000,
       reconnection: true,
       reconnectionAttempts: 5,
-      auth: {
-        token: accessToken,
-      },
     })
 
     socket.on('connect', () => {
       setOnlineConnected(true)
-      const activeRoomCode = activeRoomCodeRef.current
-      if (activeRoomCode) {
-        socket.emit('sync_state', {
-          roomId: activeRoomCode,
-        })
-      }
     })
 
     socket.on('disconnect', () => {
@@ -579,7 +511,7 @@ function App() {
 
     socket.on('room_info', (payload: RoomInfoPayload) => {
       const playerCount = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
-      setActiveRoomCode(payload.roomId)
+      setRoomCodeSafe(payload.roomId)
       setOnlineAssignedPlayer(payload.assignedPlayer)
       updateRoomPlayers(playerCount)
       setIsOnlineMatch(true)
@@ -596,7 +528,7 @@ function App() {
     socket.on('player_joined', (payload: RoomInfoPayload) => {
       const count = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
       updateRoomPlayers(count)
-      setActiveRoomCode(payload.roomId)
+      setRoomCodeSafe(payload.roomId)
       setIsOnlineMatch(true)
       if (payload.isFull || count >= 2) {
         startMatchCountdown()
@@ -612,16 +544,20 @@ function App() {
     })
 
     socket.on('chat_message', (payload: ChatMessagePayload) => {
-      const activeRoomCode = activeRoomCodeRef.current
-      if (!activeRoomCode || payload.roomId.trim().toUpperCase() !== activeRoomCode) {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
         return
       }
 
       setRoomChat((prev) => [
         ...prev,
         {
-          id: payload.sentAt + prev.length + 1,
-          user: getChatAuthor(payload),
+          id: payload.sentAt,
+          user: getChatAuthor(payload.playerId),
           msg: payload.message,
         },
       ])
@@ -630,6 +566,28 @@ function App() {
     socket.on('error', (payload: SocketErrorPayload) => {
       const message = payload?.code ? `[${payload.code}] ${payload.message}` : payload.message
       showToast(message)
+    })
+
+    socket.on('match_settled', (payload: MatchSettledPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setChainStatus('settled')
+      setModalState((prev) => ({
+        ...prev,
+        sub: 'Kết quả đã được backend ghi lên Oasis Sapphire thành công.',
+        tx: payload.txHash ? `Tx: ${payload.txHash}` : 'Tx: Đã ghi nhận on-chain',
+      }))
+
+      if (payload.txHash) {
+        showToast(`Match settled on-chain: ${payload.txHash.slice(0, 10)}...`)
+      }
     })
 
     socketRef.current = socket
@@ -656,7 +614,7 @@ function App() {
     getChatAuthor,
     hydrateFromServerState,
     isOnlineMatch,
-    setActiveRoomCode,
+    setRoomCodeSafe,
     showToast,
     startMatchCountdown,
     stopMatchCountdown,
@@ -672,26 +630,20 @@ function App() {
         setOnlineAssignedPlayer(null)
         updateRoomPlayers(1)
         stopMatchCountdown()
-        setActiveRoomCode(code)
+        setRoomCodeSafe(code)
         setScreen('waiting')
 
         socket.emit('join_room', {
-          roomId: code.trim().toUpperCase(),
+          roomId: code,
           rows: gridSizeRef.current,
           cols: gridSizeRef.current,
           playerId: clientPlayerIdRef.current,
         })
-
-        window.setTimeout(() => {
-          socket.emit('sync_state', {
-            roomId: code.trim().toUpperCase(),
-          })
-        }, 350)
-      } catch (error) {
-        showToast(getErrorMessage(error, 'Không kết nối được server realtime. Kiểm tra backend và thử lại.'))
+      } catch {
+        showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
       }
     },
-    [connectOnlineSocket, setActiveRoomCode, showToast, stopMatchCountdown, updateRoomPlayers],
+    [connectOnlineSocket, setRoomCodeSafe, showToast, stopMatchCountdown, updateRoomPlayers],
   )
 
   const isGameOver = useCallback(() => {
@@ -964,20 +916,28 @@ function App() {
       spawnConfetti()
     }
 
+    setChainStatus(isOnlineMatch ? 'settling' : 'settled')
+
     setModalState({
       open: true,
       icon,
       title,
-      sub,
-      tx: 'Tx: Đang xử lý...',
+      sub: isOnlineMatch
+        ? 'Backend signer đang ghi kết quả on-chain lên Oasis Sapphire...'
+        : sub,
+      tx: isOnlineMatch ? 'Tx: Chờ backend xác nhận...' : 'Tx: Đang xử lý...',
     })
+
+    if (isOnlineMatch) {
+      return
+    }
 
     const delay = 1500 + Math.random() * 1000
     chainTimeoutRef.current = window.setTimeout(() => {
       const tx = genTxHash()
       setModalState((prev) => ({
         ...prev,
-        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ETH đã được chuyển.` : ''}`,
+        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ROSE đã được chuyển.` : ''}`,
         tx: `Tx: ${tx}`,
       }))
 
@@ -993,7 +953,7 @@ function App() {
         moves: totalMovesRef.current,
       })
     }, delay)
-  }, [saveHistory, spawnConfetti])
+  }, [isOnlineMatch, saveHistory, spawnConfetti])
 
   useEffect(() => {
     endGameRef.current = endGame
@@ -1046,6 +1006,7 @@ function App() {
 
   const startGame = useCallback(() => {
     setIsOnlineMatch(false)
+    setChainStatus('idle')
     endModalShownRef.current = false
     const empty = createEmptyState(gridSize)
     hLinesRef.current = empty.hLines
@@ -1081,12 +1042,14 @@ function App() {
     clearTimers()
     disconnectOnlineSocket()
     setIsOnlineMatch(false)
+    setChainStatus('idle')
     setRoomCountdown(null)
     setJoinCode('')
     setChatMsg('')
+    setRoomCodeSafe('')
     endModalShownRef.current = false
     setScreen('home')
-  }, [clearTimers, disconnectOnlineSocket])
+  }, [clearTimers, disconnectOnlineSocket, setRoomCodeSafe])
 
   const openSettings = useCallback(() => {
     if (screen !== 'settings') {
@@ -1107,49 +1070,147 @@ function App() {
     setScreen('history')
   }, [])
 
-  const createRoom = useCallback(() => {
-    const code = genRoomCode()
-    setActiveRoomCode(code)
-    updateRoomPlayers(1)
-    setRoomChat([
-      { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
-    ])
-    setRoomCountdown(null)
-    setGameMode('pvp')
-    setScreen('waiting')
-    setIsOnlineMatch(true)
-    void joinOnlineRoom(code)
-  }, [joinOnlineRoom, setActiveRoomCode, updateRoomPlayers])
+  const withContractSigner = useCallback(async () => {
+    if (!window.ethereum) {
+      throw new Error('Không có provider ví trong trình duyệt')
+    }
+    if (!CONTRACT_ADDRESS) {
+      throw new Error('Thiếu VITE_CONTRACT_ADDRESS')
+    }
 
-  const joinRoom = useCallback(() => {
-    if (!joinCode.trim()) {
-      showToast('Nhập mã phòng!')
+    const wrappedProvider = sapphire.wrapEthereumProvider(window.ethereum)
+    const browserProvider = new ethers.BrowserProvider(wrappedProvider)
+    const signer = await browserProvider.getSigner()
+    const contract = new ethers.Contract(CONTRACT_ADDRESS, squarexoMatchAbi, signer)
+    return { contract, browserProvider }
+  }, [])
+
+  const refreshWalletBalance = useCallback(async () => {
+    if (!window.ethereum) {
       return
     }
 
-    const code = joinCode.trim().toUpperCase()
-    setActiveRoomCode(code)
-    updateRoomPlayers(1)
-    setRoomChat([
-      { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
-      { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
-    ])
-    setJoinCode('')
-    setGameMode('pvp')
-    setScreen('waiting')
-    setIsOnlineMatch(true)
-    void joinOnlineRoom(code)
-  }, [joinCode, joinOnlineRoom, setActiveRoomCode, showToast, updateRoomPlayers])
+    const provider = new ethers.BrowserProvider(window.ethereum)
+    const signer = await provider.getSigner()
+    const address = await signer.getAddress()
+    const balanceWei = await provider.getBalance(address)
+    setWalletBalance(ethers.formatEther(balanceWei))
+  }, [])
+
+  const lockStakeOnChain = useCallback(
+    async (targetRoomId: string, mode: 'create' | 'join') => {
+      const amount = stakeEthRef.current
+      if (amount <= 0) {
+        throw new Error('Stake phải lớn hơn 0')
+      }
+
+      const value = ethers.parseEther(amount.toString())
+      const { contract } = await withContractSigner()
+
+      setChainStatus('staking')
+      const tx =
+        mode === 'create'
+          ? await contract.createMatch(targetRoomId, value, { value })
+          : await contract.joinMatch(targetRoomId, { value })
+      await tx.wait()
+      await refreshWalletBalance()
+      setChainStatus('playing')
+      return String(tx.hash)
+    },
+    [refreshWalletBalance, withContractSigner],
+  )
+
+  const claimReward = useCallback(async () => {
+    try {
+      const { contract } = await withContractSigner()
+      const tx = await contract.claimReward(roomCodeRef.current)
+      await tx.wait()
+      await refreshWalletBalance()
+      showToast(`Claim reward thành công: ${String(tx.hash).slice(0, 10)}...`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Claim reward thất bại'
+      showToast(message)
+    }
+  }, [refreshWalletBalance, showToast, withContractSigner])
+
+  const createRoom = useCallback(() => {
+    const run = async () => {
+      if (!walletConnected) {
+        showToast('Hãy kết nối ví trước khi tạo phòng cược')
+        return
+      }
+
+      const code = genRoomCode()
+      try {
+        const txHash = await lockStakeOnChain(code, 'create')
+        showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không stake được khi tạo phòng'
+        showToast(message)
+        setChainStatus('idle')
+        return
+      }
+
+      setRoomCodeSafe(code)
+      updateRoomPlayers(1)
+      setRoomChat([
+        { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
+      ])
+      setRoomCountdown(null)
+      setGameMode('pvp')
+      setScreen('waiting')
+      setIsOnlineMatch(true)
+      void joinOnlineRoom(code)
+    }
+
+    void run()
+  }, [joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
+
+  const joinRoom = useCallback(() => {
+    const run = async () => {
+      if (!joinCode.trim()) {
+        showToast('Nhập mã phòng!')
+        return
+      }
+      if (!walletConnected) {
+        showToast('Hãy kết nối ví trước khi vào phòng cược')
+        return
+      }
+
+      const code = joinCode.trim().toUpperCase()
+      try {
+        const txHash = await lockStakeOnChain(code, 'join')
+        showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không stake được khi vào phòng'
+        showToast(message)
+        setChainStatus('idle')
+        return
+      }
+
+      setRoomCodeSafe(code)
+      updateRoomPlayers(1)
+      setRoomChat([
+        { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
+        { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
+      ])
+      setJoinCode('')
+      setGameMode('pvp')
+      setScreen('waiting')
+      setIsOnlineMatch(true)
+      void joinOnlineRoom(code)
+    }
+
+    void run()
+  }, [joinCode, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
 
   const sendChat = useCallback(() => {
     const message = chatMsg.trim()
     if (!message) return
 
-    const activeRoomCode = activeRoomCodeRef.current
-
-    if (isOnlineMatch && onlineConnected && socketRef.current && activeRoomCode) {
+    if (isOnlineMatch && onlineConnected && socketRef.current && roomCode) {
       socketRef.current.emit('chat_message', {
-        roomId: activeRoomCode,
+        roomId: roomCode,
         message,
       })
     } else {
@@ -1157,57 +1218,71 @@ function App() {
     }
 
     setChatMsg('')
-  }, [chatMsg, isOnlineMatch, onlineConnected])
+  }, [chatMsg, isOnlineMatch, onlineConnected, roomCode])
 
-  const resetWalletState = useCallback(() => {
-    setWalletConnected(false)
-    setWalletAddress('Chưa kết nối')
-    setWalletBalance('0.0000')
-  }, [])
-
-  const syncWalletState = useCallback(
-    async (accounts: string[], announceSuccess = false) => {
-      const provider = window.ethereum
-      if (!provider || !accounts.length) {
-        resetWalletState()
+  const connectWallet = useCallback(() => {
+    const connect = async () => {
+      if (!window.ethereum) {
+        showToast('Không tìm thấy MetaMask/WalletConnect provider trong trình duyệt')
         return
       }
 
-      const activeAddress = accounts[0]
-      const balanceHex = await provider.request<string>({
-        method: 'eth_getBalance',
-        params: [activeAddress, 'latest'],
-      })
+      setWalletPending(true)
+      try {
+        let browserProvider = new ethers.BrowserProvider(window.ethereum)
+        let network = await browserProvider.getNetwork()
 
-      setWalletConnected(true)
-      setWalletAddress(shortenAddress(activeAddress))
-      setWalletBalance(parseEthFromHexWei(balanceHex))
+        if (network.chainId !== OASIS_CHAIN_ID) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: OASIS_CHAIN_HEX }],
+            })
+          } catch {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: OASIS_CHAIN_HEX,
+                  chainName: OASIS_CHAIN_NAME,
+                  nativeCurrency: {
+                    name: 'Test ROSE',
+                    symbol: 'ROSE',
+                    decimals: 18,
+                  },
+                  rpcUrls: [OASIS_RPC_URL],
+                  blockExplorerUrls: ['https://explorer.oasis.io/testnet/sapphire'],
+                },
+              ],
+            })
+          }
+          browserProvider = new ethers.BrowserProvider(window.ethereum)
+          network = await browserProvider.getNetwork()
+        }
 
-      if (announceSuccess) {
-        showToast('Kết nối ví thành công!')
+        if (network.chainId !== OASIS_CHAIN_ID) {
+          throw new Error('Network chưa được chuyển sang Oasis Sapphire Testnet')
+        }
+
+        await window.ethereum.request({ method: 'eth_requestAccounts' })
+        const signer = await browserProvider.getSigner()
+        const address = await signer.getAddress()
+        const balanceWei = await browserProvider.getBalance(address)
+
+        setWalletConnected(true)
+        setWalletAddress(`${address.slice(0, 8)}...${address.slice(-6)}`)
+        setWalletBalance(ethers.formatEther(balanceWei))
+        showToast('Kết nối ví thành công trên Oasis Sapphire Testnet')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không thể kết nối ví'
+        showToast(message)
+      } finally {
+        setWalletPending(false)
       }
-    },
-    [resetWalletState, showToast],
-  )
-
-  const connectWallet = useCallback(async () => {
-    const provider = window.ethereum
-    if (!provider) {
-      showToast('Không tìm thấy ví Web3. Hãy cài MetaMask và thử lại.')
-      return
     }
 
-    setWalletConnecting(true)
-    try {
-      const accounts = await provider.request<string[]>({ method: 'eth_requestAccounts' })
-      await syncWalletState(accounts, true)
-    } catch (error) {
-      const message = getErrorMessage(error, 'Không thể kết nối ví')
-      showToast(message)
-    } finally {
-      setWalletConnecting(false)
-    }
-  }, [showToast, syncWalletState])
+    void connect()
+  }, [showToast])
 
   const playAgain = useCallback(() => {
     setModalState((prev) => ({ ...prev, open: false }))
@@ -1284,13 +1359,8 @@ function App() {
               }
 
         clientSequenceRef.current += 1
-        const activeRoomCode = activeRoomCodeRef.current
-        if (!activeRoomCode) {
-          showToast('Không xác định được room hiện tại')
-          return
-        }
         socket.emit('make_move', {
-          roomId: activeRoomCode,
+          roomId: roomCode,
           actionId: `${clientPlayerIdRef.current}-${Date.now()}-${clientSequenceRef.current}`,
           clientSequence: clientSequenceRef.current,
           edge,
@@ -1300,7 +1370,7 @@ function App() {
 
       applyMove(line)
     },
-    [applyMove, getLineFromPos, isOnlineMatch, onlineAssignedPlayer, onlineConnected, showToast],
+    [applyMove, getLineFromPos, isOnlineMatch, onlineAssignedPlayer, onlineConnected, roomCode, showToast],
   )
 
   const totalEth = useMemo(() => {
@@ -1320,49 +1390,33 @@ function App() {
     setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))
   }, [])
 
-  const handleLogin = useCallback(async () => {
-    if (!loginForm.email || !loginForm.password) {
-      setAuthError('Vui lòng nhập email và mật khẩu')
+  const handleLogin = useCallback(() => {
+    if (!loginForm.username || !loginForm.password) {
+      setAuthError('Vui lòng nhập đầy đủ thông tin')
       return
     }
     setAuthError('')
     setAuthLoading(true)
 
-    try {
-      const data = await requestAuth('/api/auth/login', {
-        email: loginForm.email,
-        password: loginForm.password,
-      })
-
+    // Mock login
+    window.setTimeout(() => {
       const user: User = {
-        id: data.user.id,
-        username: data.user.username,
-        email: data.user.email,
+        id: `user_${Date.now()}`,
+        username: loginForm.username,
+        email: `${loginForm.username}@chain.io`,
         avatar: '🎮',
-        joinedDate: data.user.createdAt ? new Date(data.user.createdAt).toLocaleDateString('vi-VN') : undefined,
+        joinedDate: '01/01/2025',
       }
-
-      localStorage.setItem(USER_KEY, JSON.stringify(user))
-      localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
-      if (data.refreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
-      }
-      localStorage.removeItem(LEGACY_USER_KEY)
-      localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
-      localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY)
-
       setAuthUser(user)
-      setLoginForm({ email: '', password: '' })
+      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      setLoginForm({ username: '', password: '' })
       setScreen('home')
-      showToast('Đăng nhập thành công!')
-    } catch (error) {
-      setAuthError(getErrorMessage(error, 'Đăng nhập thất bại'))
-    } finally {
       setAuthLoading(false)
-    }
+      showToast('Đăng nhập thành công!')
+    }, 800)
   }, [loginForm, showToast])
 
-  const handleRegister = useCallback(async () => {
+  const handleRegister = useCallback(() => {
     if (!registerForm.username || !registerForm.email || !registerForm.password || !registerForm.confirm) {
       setAuthError('Vui lòng nhập đầy đủ thông tin')
       return
@@ -1378,58 +1432,34 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
 
-    try {
-      const data = await requestAuth('/api/auth/register', {
+    // Mock register
+    window.setTimeout(() => {
+      const user: User = {
+        id: `user_${Date.now()}`,
         username: registerForm.username,
         email: registerForm.email,
-        password: registerForm.password,
-      })
-
-      const user: User = {
-        id: data.user.id,
-        username: data.user.username,
-        email: data.user.email,
         avatar: '🎮',
-        joinedDate: data.user.createdAt ? new Date(data.user.createdAt).toLocaleDateString('vi-VN') : undefined,
+        joinedDate: new Date().toLocaleDateString('vi-VN'),
       }
-
-      localStorage.setItem(USER_KEY, JSON.stringify(user))
-      localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken)
-      if (data.refreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken)
-      }
-      localStorage.removeItem(LEGACY_USER_KEY)
-      localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
-      localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY)
-
       setAuthUser(user)
+      localStorage.setItem('dbAuthUser', JSON.stringify(user))
       setRegisterForm({ username: '', email: '', password: '', confirm: '' })
       setScreen('home')
-      showToast('Đăng ký thành công!')
-    } catch (error) {
-      setAuthError(getErrorMessage(error, 'Đăng ký thất bại'))
-    } finally {
       setAuthLoading(false)
-    }
+      showToast('Đăng ký thành công!')
+    }, 800)
   }, [registerForm, showToast])
 
   const handleLogout = useCallback(() => {
-    disconnectOnlineSocket()
-    setIsOnlineMatch(false)
     setAuthUser(null)
-    localStorage.removeItem(USER_KEY)
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-    localStorage.removeItem(LEGACY_USER_KEY)
-    localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY)
-    localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY)
+    localStorage.removeItem('dbAuthUser')
     setScreen('auth')
     setAuthTab('login')
-    setLoginForm({ email: '', password: '' })
+    setLoginForm({ username: '', password: '' })
     setRegisterForm({ username: '', email: '', password: '', confirm: '' })
     setAuthError('')
     showToast('Đã đăng xuất')
-  }, [disconnectOnlineSocket, showToast])
+  }, [showToast])
 
   useEffect(() => {
     gridSizeRef.current = gridSize
@@ -1444,39 +1474,6 @@ function App() {
   useEffect(() => {
     stakeEthRef.current = stakeEth
   }, [stakeEth])
-
-  useEffect(() => {
-    if (!authUser) {
-      return
-    }
-
-    const accessToken = getStoredAccessToken()
-    if (accessToken) {
-      return
-    }
-
-    setAuthUser(null)
-    setScreen('auth')
-    localStorage.removeItem(USER_KEY)
-    localStorage.removeItem(LEGACY_USER_KEY)
-  }, [authUser])
-
-  useEffect(() => {
-    const legacyAccessToken = localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY)
-    if (legacyAccessToken && !localStorage.getItem(ACCESS_TOKEN_KEY)) {
-      localStorage.setItem(ACCESS_TOKEN_KEY, legacyAccessToken)
-    }
-
-    const legacyRefreshToken = localStorage.getItem(LEGACY_REFRESH_TOKEN_KEY)
-    if (legacyRefreshToken && !localStorage.getItem(REFRESH_TOKEN_KEY)) {
-      localStorage.setItem(REFRESH_TOKEN_KEY, legacyRefreshToken)
-    }
-
-    const legacyUser = localStorage.getItem(LEGACY_USER_KEY)
-    if (legacyUser && !localStorage.getItem(USER_KEY)) {
-      localStorage.setItem(USER_KEY, legacyUser)
-    }
-  }, [])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode)
@@ -1507,48 +1504,6 @@ function App() {
       }
     }
   }, [clearTimers, disconnectOnlineSocket])
-
-  useEffect(() => {
-    const provider = window.ethereum
-    if (!provider) {
-      return
-    }
-
-    void provider
-      .request<string[]>({ method: 'eth_accounts' })
-      .then((accounts) => syncWalletState(accounts))
-      .catch(() => {
-        resetWalletState()
-      })
-
-    const handleAccountsChanged = (payload: unknown) => {
-      const accounts = Array.isArray(payload) ? (payload as string[]) : []
-      void syncWalletState(accounts)
-    }
-
-    const handleChainChanged = () => {
-      void provider
-        .request<string[]>({ method: 'eth_accounts' })
-        .then((accounts) => syncWalletState(accounts))
-        .catch(() => {
-          resetWalletState()
-        })
-    }
-
-    const handleDisconnect = () => {
-      resetWalletState()
-    }
-
-    provider.on?.('accountsChanged', handleAccountsChanged)
-    provider.on?.('chainChanged', handleChainChanged)
-    provider.on?.('disconnect', handleDisconnect)
-
-    return () => {
-      provider.removeListener?.('accountsChanged', handleAccountsChanged)
-      provider.removeListener?.('chainChanged', handleChainChanged)
-      provider.removeListener?.('disconnect', handleDisconnect)
-    }
-  }, [resetWalletState, syncWalletState])
 
   return (
     <div className="db-app">
@@ -1601,12 +1556,12 @@ function App() {
               {authTab === 'login' && (
                 <div className="auth-form">
                   <div className="form-group">
-                    <label>EMAIL</label>
+                    <label>TÊN NGƯỜI DÙNG</label>
                     <input
-                      type="email"
-                      placeholder="email@example.com"
-                      value={loginForm.email}
-                      onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                      type="text"
+                      placeholder="username"
+                      value={loginForm.username}
+                      onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
                       disabled={authLoading}
                     />
                   </div>
@@ -1629,7 +1584,9 @@ function App() {
                   >
                     {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG NHẬP'}
                   </button>
-                  <div className="auth-demo">Đăng nhập bằng email đã đăng ký trên backend.</div>
+                  <div className="auth-demo">
+                    Demo: <span className="demo-link">demo / demo123</span>
+                  </div>
                 </div>
               )}
 
@@ -1718,14 +1675,14 @@ function App() {
                 <button
                   className="btn-ghost connect-btn"
                   onClick={connectWallet}
-                  disabled={walletConnected || walletConnecting}
+                  disabled={walletConnected || walletPending}
                 >
-                  {walletConnected ? '✓ Đã kết nối' : walletConnecting ? 'Đang kết nối...' : 'Kết Nối'}
+                  {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
                 </button>
               </div>
               {walletConnected && (
                 <div className="wallet-balance">
-                  Số dư: <span className="balance-val">{walletBalance}</span> ETH · <span className="network-val">Sepolia</span>
+                  Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                 </div>
               )}
             </div>
@@ -1749,19 +1706,19 @@ function App() {
               </div>
 
               <div className="row">
-                <label>Stake (ETH)</label>
+                <label>Stake (ROSE)</label>
                 <div className="stake-wrap">
                   <input
                     className="stake-inp"
                     type="number"
                     min="0"
                     step="0.001"
-                    title="Stake amount in ETH"
+                    title="Stake amount in ROSE"
                     placeholder="0.001"
                     value={stakeEth}
                     onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                   />
-                  <span className="stake-unit">ETH</span>
+                  <span className="stake-unit">ROSE</span>
                 </div>
               </div>
 
@@ -1874,7 +1831,7 @@ function App() {
                 </div>
                 <div className="profile-stat">
                   <div className="profile-stat-value">{totalEth.toFixed(3)}</div>
-                  <div className="profile-stat-label">Tổng Stake ETH</div>
+                  <div className="profile-stat-label">Tổng Stake ROSE</div>
                 </div>
               </div>
 
@@ -1883,14 +1840,14 @@ function App() {
                 <div className="profile-wallet-row">
                   <span className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
                   <span className="profile-wallet-address">{walletAddress}</span>
-                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected || walletConnecting}>
-                    {walletConnected ? '✓ Đã kết nối' : walletConnecting ? 'Đang kết nối...' : 'Kết Nối'}
+                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected || walletPending}>
+                    {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
                   </button>
                 </div>
                 <div className="profile-wallet-meta">
                   {walletConnected ? (
                     <>
-                      Số dư: <span className="balance-val">{walletBalance}</span> ETH · <span className="network-val">Sepolia</span>
+                      Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                     </>
                   ) : (
                     'Chưa kết nối ví'
@@ -1939,19 +1896,19 @@ function App() {
                   </div>
                 </div>
                 <div className="row">
-                  <label>Stake (ETH)</label>
+                  <label>Stake (ROSE)</label>
                   <div className="stake-wrap">
                     <input
                       className="stake-inp"
                       type="number"
                       min="0"
                       step="0.001"
-                      title="Stake amount in ETH"
+                      title="Stake amount in ROSE"
                       placeholder="0.001"
                       value={stakeEth}
                       onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                     />
-                    <span className="stake-unit">ETH</span>
+                    <span className="stake-unit">ROSE</span>
                   </div>
                 </div>
                 <button className="btn-primary room-create-btn" onClick={createRoom}>⚡ TẠO PHÒNG</button>
@@ -1997,24 +1954,16 @@ function App() {
               <div className="players-row">
                 <div className="player-slot">
                   <div className="slot-avatar p1">X</div>
-                  <div className="slot-name">
-                    {onlineAssignedPlayer === 'X' ? 'Bạn' : roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}
-                  </div>
+                  <div className="slot-name">Bạn</div>
                 </div>
                 <div className="vs-sep">VS</div>
                 <div className="player-slot">
                   <div className={`slot-avatar ${roomPlayers >= 2 ? 'p2' : 'empty'}`}>
                     {roomPlayers >= 2 ? 'O' : '?'}
                   </div>
-                  <div className="slot-name">
-                    {onlineAssignedPlayer === 'O' ? 'Bạn' : roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}
-                  </div>
+                  <div className="slot-name">{roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}</div>
                 </div>
               </div>
-            </div>
-
-            <div className="waiting-label waiting-role-label">
-              Vai trò của bạn: {onlineAssignedPlayer ?? 'Đang chờ server gán role'}
             </div>
 
             {roomCountdown !== null ? (
@@ -2072,14 +2021,22 @@ function App() {
             <div className="ticker">
               <div className="ticker-item"><span className="t-lbl">Block</span><span className="t-val green">#{blockNum.toLocaleString()}</span></div>
               <span className="t-sep">|</span>
-              <div className="ticker-item"><span className="t-lbl">Stake</span><span className="t-val gold">{stakeEth.toFixed(3)} ETH</span></div>
+              <div className="ticker-item"><span className="t-lbl">Stake</span><span className="t-val gold">{stakeEth.toFixed(3)} ROSE</span></div>
               <span className="t-sep">|</span>
               <div className="ticker-item"><span className="t-lbl">Gas</span><span className="t-val pink">12 gwei</span></div>
               <span className="t-sep">|</span>
               <div className="ticker-item"><span className="t-lbl">Moves</span><span className="t-val green">{totalMoves}</span></div>
               <span className="t-sep">|</span>
-              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">0x4a2f...c3e1</span></div>
+              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{CONTRACT_ADDRESS ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Chưa cấu hình'}</span></div>
             </div>
+
+            {isOnlineMatch && chainStatus === 'settled' && (
+              <div className="claim-reward-wrap">
+                <button className="btn-ghost" onClick={() => void claimReward()}>
+                  Claim Reward On-chain
+                </button>
+              </div>
+            )}
 
             <div className="turn-pill">
               Lượt:{' '}
@@ -2115,7 +2072,7 @@ function App() {
               <div>
                 <div className="h-title">⬡ Lịch Sử On-Chain</div>
                 <div className="history-chain-sub">
-                  Sepolia Testnet · Smart Contract 0x4a2f...c3e1
+                  Oasis Sapphire Testnet · Smart Contract {CONTRACT_ADDRESS ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa cấu hình'}
                 </div>
               </div>
               <button className="btn-ghost" onClick={goHome}>← Quay Lại</button>
@@ -2123,7 +2080,7 @@ function App() {
 
             <div className="stats-row">
               <div className="stat-card"><div className="s-val c1">{gameHistory.length}</div><div className="s-lbl">Ván Đã Chơi</div></div>
-              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ETH</div></div>
+              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ROSE</div></div>
               <div className="stat-card"><div className="s-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div><div className="s-lbl">Win Rate X</div></div>
             </div>
 

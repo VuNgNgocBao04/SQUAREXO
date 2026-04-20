@@ -5,6 +5,7 @@ const createTestGame = () => ({
   rows: 3,
   cols: 3,
   edges: [],
+  boxes: [],
   currentPlayer: "X" as const,
   score: { X: 0, O: 0 },
 });
@@ -28,6 +29,18 @@ describe("RoomManager", () => {
 
     const assigned = manager.assignSocket(room, "s1b", "p1");
     expect(assigned).toBe("X");
+  });
+
+  it("starts the match timer when the room becomes full", () => {
+    const manager = new RoomManager(100000, 5000);
+    const room = manager.getOrCreateRoom("room_2b", 3, 3, createTestGame());
+    const initialStartedAt = room.matchStartedAt;
+
+    expect(manager.assignSocket(room, "s1", "p1")).toBe("X");
+    expect(room.matchStartedAt).toBe(initialStartedAt);
+
+    expect(manager.assignSocket(room, "s2", "p2")).toBe("O");
+    expect(room.matchStartedAt).not.toBe(initialStartedAt);
   });
 
   it("releases slot immediately when reserveForReconnect is false", () => {

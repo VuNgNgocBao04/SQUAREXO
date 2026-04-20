@@ -17,7 +17,7 @@ export const joinRoomSchema = z.object({
   rows: z.number().int().min(1).max(12).optional(),
   cols: z.number().int().min(1).max(12).optional(),
   playerId: z.string().min(1).max(128).optional(),
-});
+}).strict();
 
 export const makeMoveSchema = z.object({
   roomId: z.string().regex(roomIdRegex),
@@ -36,20 +36,25 @@ export const syncStateSchema = z.object({
 
 export const chatMessageSchema = z.object({
   roomId: z.string().regex(roomIdRegex),
-  message: z.string().trim().min(1).max(500),
+  message: z.string().trim().min(1).max(300),
 });
 
 // Auth schemas
 export const registerSchema = z.object({
-  username: z.string().min(3).max(50),
-  email: z.string().email(),
+  username: z
+    .string()
+    .trim()
+    .min(3)
+    .max(50)
+    .regex(/^[a-zA-Z0-9_]+$/, "username must contain only letters, numbers and underscore"),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(6).max(128),
   walletAddress: z.string().optional(),
 });
 
 export const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(6).max(128),
 });
 
 export const refreshTokenSchema = z.object({

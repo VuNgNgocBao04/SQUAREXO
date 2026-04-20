@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: squarexo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: squarexo
+      POSTGRES_PASSWORD: squarexo
+      POSTGRES_DB: squarexo
+    ports:
+      - "5432:5432"
+    volumes:
+      - squarexo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squarexo -d squarexo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  squarexo_postgres_data:

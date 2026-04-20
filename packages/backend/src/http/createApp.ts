@@ -5,10 +5,25 @@ import { metrics } from "../observability/metrics";
 import { JwtTokenService } from "../services/authService";
 import { createAuthRoutes } from "./authRoutes";
 import { createAuthMiddleware } from "./authMiddleware";
+import { createUsersRouter } from "../routes/users";
+import { createMatchesRouter } from "../routes/matches";
+import { UserService } from "../services/userService";
+import { MatchService } from "../services/matchService";
+import { BlockchainService } from "../services/blockchainService";
 
-export function createApp(env: AppEnv): Express {
+export type CreatedApp = {
+  app: Express;
+  tokenService: JwtTokenService;
+  matchService: MatchService;
+  blockchainService: BlockchainService;
+};
+
+export function createApp(env: AppEnv): CreatedApp {
   const app = express();
   const tokenService = new JwtTokenService(env);
+  const userService = new UserService();
+  const matchService = new MatchService();
+  const blockchainService = new BlockchainService(env);
 
   app.use(express.json());
   app.use(
@@ -34,12 +49,19 @@ export function createApp(env: AppEnv): Express {
   // Auth routes (public except for /me which requires auth)
   const authMiddleware = createAuthMiddleware(tokenService);
   const authRoutes = createAuthRoutes(tokenService, authMiddleware);
+  const usersRoutes = createUsersRouter(userService, matchService);
+  const matchesRoutes = createMatchesRouter(matchService);
+
+  app.use("/auth", authRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/protected", authMiddleware);
+  app.use("/users", authMiddleware, usersRoutes);
+  app.use("/matches", authMiddleware, matchesRoutes);
 
-  // Export token service and auth middleware for use in server.ts
-  (app as any).tokenService = tokenService;
-  (app as any).authMiddleware = authMiddleware;
-
-  return app;
+  return {
+    app,
+    tokenService,
+    matchService,
+    blockchainService,
+  };
 }

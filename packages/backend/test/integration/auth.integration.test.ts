@@ -17,6 +17,8 @@ describe("Auth API Routes", () => {
     CORS_ORIGIN: "*",
     NODE_ENV: "test",
     JWT_SECRET: "test-secret-key-that-is-long-enough-for-testing",
+    JWT_ISSUER: "squarexo-test-suite",
+    JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
     PUBLIC_BASE_URL: "http://localhost:3000",
@@ -134,6 +136,25 @@ describe("Auth API Routes", () => {
       expect(res.body.code).toBe("USER_EXISTS");
     });
 
+    it("should reject duplicate username with different casing", async () => {
+      await request(app).post("/api/auth/register").send({
+        username: "TestUser",
+        email: "test1@example.com",
+        password: "password123",
+      });
+
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: "testuser",
+          email: "test2@example.com",
+          password: "password123",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("USER_EXISTS");
+    });
+
     it("should validate required fields", async () => {
       const res = await request(app).post("/api/auth/register").send({
         username: "testuser",
@@ -182,6 +203,24 @@ describe("Auth API Routes", () => {
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("VALIDATION_ERROR");
     });
+
+    it("should return one success and one conflict under concurrent duplicate registration", async () => {
+      const payload = {
+        username: "race_user",
+        email: "race@example.com",
+        password: "password123",
+      };
+
+      const [r1, r2] = await Promise.all([
+        request(app).post("/api/auth/register").send(payload),
+        request(app).post("/api/auth/register").send(payload),
+      ]);
+
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toEqual([201, 409]);
+      expect([r1.body.code, r2.body.code]).toContain("USER_EXISTS");
+      expect([r1.body.code, r2.body.code]).not.toContain("INTERNAL_ERROR");
+    });
   });
 
   describe("POST /api/auth/login", () => {
@@ -212,6 +251,16 @@ describe("Auth API Routes", () => {
         createdAt: expect.any(String),
         updatedAt: expect.any(String),
       });
+    });
+
+    it("should login with case-insensitive email", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: "TEST@EXAMPLE.COM",
+        password: "password123",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("accessToken");
     });
 
     it("should reject login with wrong password", async () => {
@@ -265,6 +314,32 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("accessToken");
+      expect(res.body).toHaveProperty("refreshToken");
+      expect(res.body.refreshToken).not.toBe(refreshToken);
+    });
+
+    it("should revoke previous refresh token after rotation", async () => {
+      const firstRefresh = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(firstRefresh.status).toBe(200);
+      expect(firstRefresh.body).toHaveProperty("refreshToken");
+
+      const secondRefreshWithOldToken = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(secondRefreshWithOldToken.status).toBe(401);
+      expect(secondRefreshWithOldToken.body.code).toBe("REVOKED_REFRESH_TOKEN");
+
+      const secondRefreshWithNewToken = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: firstRefresh.body.refreshToken });
+
+      expect(secondRefreshWithNewToken.status).toBe(200);
+      expect(secondRefreshWithNewToken.body).toHaveProperty("accessToken");
+      expect(secondRefreshWithNewToken.body).toHaveProperty("refreshToken");
     });
 
     it("should reject invalid refresh token", async () => {
@@ -281,6 +356,35 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+  });
+
+  describe("POST /api/auth/logout", () => {
+    let refreshToken: string;
+
+    beforeEach(async () => {
+      const res = await request(app).post("/api/auth/register").send({
+        username: "testuser",
+        email: "test@example.com",
+        password: "password123",
+      });
+      refreshToken = res.body.refreshToken;
+    });
+
+    it("should revoke refresh token on logout", async () => {
+      const logoutRes = await request(app)
+        .post("/api/auth/logout")
+        .send({ refreshToken });
+
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body.success).toBe(true);
+
+      const refreshRes = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(refreshRes.status).toBe(401);
+      expect(refreshRes.body.code).toBe("REVOKED_REFRESH_TOKEN");
     });
   });
 
@@ -390,8 +494,6 @@ describe("Auth API Routes", () => {
   describe("Token type validation - Critical Security Tests", () => {
     let accessToken: string;
     let refreshToken: string;
-    let userId: string;
-
     beforeEach(async () => {
       // Register user to get tokens
       const res = await request(app).post("/api/auth/register").send({
@@ -401,7 +503,6 @@ describe("Auth API Routes", () => {
       });
       accessToken = res.body.accessToken;
       refreshToken = res.body.refreshToken;
-      userId = res.body.user.id;
     });
 
     it("should reject refresh token when used as access token in protected route", async () => {
@@ -431,19 +532,6 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(401);
       expect(res.body.code).toBe("INVALID_TOKEN");
-    });
-
-    it("should reject refresh token from being used as access token in /api/auth/me", async () => {
-      // Additional validation test - refresh token should never be valid for access endpoints
-      const res = await request(app)
-        .get("/api/auth/me")
-        .set("Authorization", `Bearer ${refreshToken}`);
-
-      expect(res.status).toBe(401);
-      expect([
-        "INVALID_TOKEN",
-        "INVALID_TOKEN_TYPE",
-      ]).toContain(res.body.code);
     });
   });
 });

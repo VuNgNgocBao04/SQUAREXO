@@ -18,6 +18,8 @@ export type Room = {
   roomId: string;
   gameState: GameState;
   stateVersion: number;
+  matchStartedAt: Date;
+  matchSaved: boolean;
   boardSize: { rows: number; cols: number };
   players: Record<PlayerSlot, string | null>;
   socketToPlayerId: Map<string, string>;
@@ -53,6 +55,11 @@ export class RoomManager {
       roomId,
       gameState: initialState,
       stateVersion: 0,
+      // matchStartedAt will be set once 2nd player joins (see assignSocket).
+      // Using a placeholder here is defensive practice to prevent undefined errors,
+      // but value will be overwritten. Never use the value from room creation time.
+      matchStartedAt: new Date(),
+      matchSaved: false,
       boardSize: { rows, cols },
       players: { X: null, O: null },
       socketToPlayerId: new Map<string, string>(),
@@ -66,6 +73,13 @@ export class RoomManager {
   }
 
   assignSocket(room: Room, socketId: string, requestedPlayerId: string): Player | null {
+    const wasMatchReady = room.players.X !== null && room.players.O !== null;
+    const markMatchStartedIfReady = () => {
+      if (!wasMatchReady && room.players.X !== null && room.players.O !== null) {
+        room.matchStartedAt = new Date();
+      }
+    };
+
     room.socketToPlayerId.set(socketId, requestedPlayerId);
     this.socketToRoomId.set(socketId, room.roomId);
 
@@ -73,6 +87,7 @@ export class RoomManager {
     if (recover && recover.expiresAt > Date.now()) {
       room.players[recover.slot] = requestedPlayerId;
       room.pendingReconnect.delete(requestedPlayerId);
+      markMatchStartedIfReady();
       return recover.slot;
     }
 
@@ -86,11 +101,13 @@ export class RoomManager {
 
     if (!room.players.X) {
       room.players.X = requestedPlayerId;
+      markMatchStartedIfReady();
       return "X";
     }
 
     if (!room.players.O) {
       room.players.O = requestedPlayerId;
+      markMatchStartedIfReady();
       return "O";
     }
 

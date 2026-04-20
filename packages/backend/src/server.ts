@@ -5,6 +5,46 @@ import { logger } from "./config/logger";
 import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
+import type { JwtPayload } from "./types/auth";
+
+function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string | string[] | undefined): string | null {
+  if (typeof rawAuthToken === "string" && rawAuthToken.length > 0) {
+    return rawAuthToken;
+  }
+
+  if (typeof authorizationHeader === "string") {
+    const [scheme, token] = authorizationHeader.split(" ");
+    if (scheme === "Bearer" && token) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+function buildGuestSocketUser(rawGuestId: unknown): JwtPayload | null {
+  if (typeof rawGuestId !== "string") {
+    return null;
+  }
+
+  const guestId = rawGuestId.trim();
+  if (!guestId) {
+    return null;
+  }
+
+  const safeGuest = guestId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  if (!safeGuest) {
+    return null;
+  }
+
+  return {
+    userId: `guest_${safeGuest}`,
+    username: `guest_${safeGuest}`,
+    email: `guest_${safeGuest}@squarexo.local`,
+    role: "guest",
+    tokenType: "access",
+  };
+}
 
 export type BackendServer = {
   io: IOServer;
@@ -13,13 +53,38 @@ export type BackendServer = {
 };
 
 export function createBackendServer(env: AppEnv): BackendServer {
-  const app = createApp(env);
+  const { app, tokenService, matchService, blockchainService } = createApp(env);
   const httpServer = createServer(app);
   const io = new IOServer(httpServer, {
     cors: {
       origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN,
       methods: ["GET", "POST"],
     },
+  });
+
+  io.use((socket, next) => {
+    const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
+
+    if (token) {
+      const verified = tokenService.verifyAccessToken(token);
+      if (verified.error || !verified.payload) {
+        next(new Error(verified.error ?? "INVALID_TOKEN"));
+        return;
+      }
+
+      socket.data.user = verified.payload as JwtPayload;
+      next();
+      return;
+    }
+
+    const guestUser = buildGuestSocketUser(socket.handshake.auth?.playerId);
+    if (!guestUser) {
+      next(new Error("MISSING_TOKEN"));
+      return;
+    }
+
+    socket.data.user = guestUser;
+    next();
   });
 
   const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);
@@ -31,6 +96,8 @@ export function createBackendServer(env: AppEnv): BackendServer {
   registerSocketHandlers(io, {
     roomManager,
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${env.PORT}`,
+    matchService,
+    blockchainService,
   });
 
   let closed = false;
