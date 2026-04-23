@@ -1,4 +1,4 @@
-name: oasis-predeploy
+name: oasis
 
 on:
   pull_request:
@@ -11,6 +11,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -19,12 +21,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: "10"
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: pnpm
 
       - name: Install dependencies
@@ -48,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: oasis-testnet
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -56,12 +60,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: "10"
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: pnpm
 
       - name: Install dependencies
