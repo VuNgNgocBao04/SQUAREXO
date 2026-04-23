@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap');
 
 :root {
   --bg: #020810;
@@ -46,7 +46,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Be Vietnam Pro', sans-serif;
   overflow-x: hidden;
 }
 
@@ -151,7 +151,7 @@ body {
 }
 
 .logo-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: clamp(32px, 6vw, 72px);
   font-weight: 900;
   letter-spacing: 4px;
@@ -174,7 +174,7 @@ body {
 }
 
 .logo-sub {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 8px;
@@ -226,7 +226,7 @@ body {
 .stat-lbl,
 .history-subtitle,
 .h-num {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -263,7 +263,7 @@ body {
 .modal-title,
 .modal-tx,
 .stat-val {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-weight: 700;
 }
 
@@ -314,7 +314,7 @@ body {
 }
 
 .backend-demo-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 15px;
   letter-spacing: 2px;
   color: var(--accent);
@@ -399,7 +399,7 @@ body {
 
 .backend-log-line {
   font-size: 12px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   opacity: 0.95;
 }
 
@@ -412,7 +412,7 @@ body {
 }
 
 .config-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
   letter-spacing: 3px;
   color: var(--accent);
@@ -452,7 +452,7 @@ body {
 .size-btn {
   flex: 1;
   padding: 10px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   cursor: pointer;
 }
@@ -475,7 +475,7 @@ body {
   flex: 1;
   padding: 10px 14px;
   color: var(--text);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   background: var(--surface2);
   outline: none;
@@ -521,7 +521,7 @@ body {
   padding: 16px;
   background: linear-gradient(135deg, var(--accent3), var(--accent2));
   color: #fff;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 3px;
@@ -563,7 +563,7 @@ body {
 }
 
 .nav-logo {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   font-weight: 900;
   color: var(--accent);
@@ -615,7 +615,7 @@ body {
 }
 
 .player-name {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 11px;
   letter-spacing: 2px;
   color: var(--muted);
@@ -662,7 +662,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 11px;
   font-weight: 700;
   color: var(--muted);
@@ -714,7 +714,7 @@ body {
   border-radius: 999px;
   background: var(--surface2);
   border: 1px solid var(--border);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 11px;
   letter-spacing: 2px;
 }
@@ -802,7 +802,7 @@ body {
 }
 
 .history-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 20px;
   font-weight: 700;
   color: var(--accent);
@@ -879,7 +879,7 @@ body {
 }
 
 .h-tx-hash {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 10px;
 }
 
@@ -1022,7 +1022,7 @@ body {
   border-radius: 10px;
   padding: 12px 24px;
   z-index: 500;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   letter-spacing: 1px;
   box-shadow: 0 0 30px rgba(123, 47, 255, 0.4);
@@ -1066,7 +1066,7 @@ body {
 }
 
 .card-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 3px;
@@ -1082,7 +1082,7 @@ body {
 .row label {
   display: block;
   color: var(--text);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 28px;
   font-weight: 700;
   margin-bottom: 6px;
@@ -1108,14 +1108,14 @@ body {
   background: transparent;
   color: var(--muted);
   border-radius: 8px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-weight: 400;
 }
 
 .sz-btn {
   flex: 1;
   padding: 10px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1139,7 +1139,7 @@ body {
   flex: 1;
   padding: 10px 14px;
   color: var(--text);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   font-weight: 400;
   background: var(--surface2);
@@ -1162,7 +1162,7 @@ body {
 .md-btn {
   flex: 1;
   padding: 10px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1179,7 +1179,7 @@ body {
 .btn-ghost {
   cursor: pointer;
   transition: all 0.25s ease;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-weight: 600;
 }
 
@@ -1191,7 +1191,7 @@ body {
   padding: 14px;
   background: linear-gradient(135deg, var(--accent3), var(--accent2));
   color: #fff;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 2px;
@@ -1219,7 +1219,7 @@ body {
   border-radius: 12px;
   background: var(--surface);
   color: var(--muted);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -1240,7 +1240,7 @@ body {
   padding: 11px 14px;
   color: var(--text);
   background: var(--surface2);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   font-weight: 400;
   letter-spacing: 3px;
@@ -1313,7 +1313,7 @@ body {
 }
 
 .code-val {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 36px;
   font-weight: 900;
   color: var(--accent3);
@@ -1350,7 +1350,7 @@ body {
   align-items: center;
   justify-content: center;
   font-size: 20px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
 }
 
 .slot-avatar.p1 {
@@ -1373,7 +1373,7 @@ body {
 
 .slot-name,
 .waiting-label {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -1383,7 +1383,7 @@ body {
 
 .vs-sep,
 .vs {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   color: var(--muted);
 }
 
@@ -1413,7 +1413,7 @@ body {
 .chat-header {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -1463,7 +1463,7 @@ body {
   background: transparent;
   color: var(--text);
   padding: 10px 14px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   font-weight: 400;
   outline: none;
@@ -1476,7 +1476,7 @@ body {
   color: var(--accent3);
   cursor: pointer;
   padding: 10px 16px;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 1px;
@@ -1488,7 +1488,7 @@ body {
 }
 
 .countdown {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 56px;
   font-weight: 900;
   color: var(--accent3);
@@ -1514,7 +1514,7 @@ body {
 }
 
 .p-name {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -1523,7 +1523,7 @@ body {
 }
 
 .p-score {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 30px;
   font-weight: 900;
 }
@@ -1546,7 +1546,7 @@ body {
 }
 
 .t-lbl {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -1560,7 +1560,7 @@ body {
 }
 
 .h-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 20px;
   font-weight: 700;
   color: var(--accent);
@@ -1584,7 +1584,7 @@ body {
 }
 
 .s-val {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 28px;
   font-weight: 900;
 }
@@ -1753,7 +1753,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   outline: none;
   transition: all 0.3s;
@@ -1915,7 +1915,7 @@ body {
 }
 
 .settings-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 22px;
   letter-spacing: 2px;
   color: var(--accent);
@@ -1940,6 +1940,14 @@ body {
   color: var(--text);
 }
 
+.waiting-role-label {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(0, 245, 255, 0.08);
+  color: var(--text);
+}
 .settings-desc {
   color: var(--muted);
   margin-bottom: 12px;
@@ -1990,7 +1998,7 @@ body {
   margin-top: 18px;
   margin-bottom: 10px;
   text-align: center;
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 11px;
   letter-spacing: 3px;
   color: var(--muted);
@@ -2009,7 +2017,7 @@ body {
   color: #8bb2e8;
   border-radius: 10px;
   padding: 12px 14px;
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -2137,7 +2145,7 @@ body {
 }
 
 .user-name {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
   letter-spacing: 0.4px;
 }
@@ -2154,7 +2162,7 @@ body {
   padding: 7px 12px;
   background: rgba(0, 22, 48, 0.52);
   color: #7da4d9;
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -2213,7 +2221,7 @@ body {
 }
 
 .settings-label {
-  font-family: 'Rajdhani', sans-serif;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 30px;
   line-height: 1;
   font-weight: 700;
@@ -2278,7 +2286,7 @@ body {
 }
 
 .profile-name {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 18px;
   letter-spacing: 1px;
   color: var(--accent);
@@ -2310,7 +2318,7 @@ body {
 }
 
 .profile-stat-value {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 20px;
   font-weight: 700;
   color: var(--accent);
@@ -2331,7 +2339,7 @@ body {
 }
 
 .profile-section-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 13px;
   letter-spacing: 2px;
   color: var(--accent);
@@ -2511,7 +2519,7 @@ body {
 }
 
 .profile-wallet-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   letter-spacing: 2px;
   color: var(--accent);
@@ -2526,7 +2534,7 @@ body {
 }
 
 .profile-wallet-address {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 12px;
   color: #a6c7f3;
   overflow: hidden;
@@ -2561,7 +2569,7 @@ body {
 }
 
 .room-header-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 16px;
   color: var(--accent);
 }
@@ -2603,7 +2611,7 @@ body {
 }
 
 .waiting-title {
-  font-family: 'Orbitron', monospace;
+  font-family: 'Be Vietnam Pro', sans-serif;
   font-size: 14px;
   color: var(--accent);
   letter-spacing: 3px;

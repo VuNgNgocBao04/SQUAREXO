@@ -7,6 +7,7 @@ import { createAuthRoutes } from "./authRoutes";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createUsersRouter } from "../routes/users";
 import { createMatchesRouter } from "../routes/matches";
+import { createHistoryRouter } from "../routes/history";
 import { UserService } from "../services/userService";
 import { MatchService } from "../services/matchService";
 import { BlockchainService } from "../services/blockchainService";
@@ -24,11 +25,25 @@ export function createApp(env: AppEnv): CreatedApp {
   const userService = new UserService();
   const matchService = new MatchService();
   const blockchainService = new BlockchainService(env);
+  const corsOrigins = env.CORS_ORIGIN.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+  const corsOriginConfig =
+    corsOrigins.includes("*") || corsOrigins.length === 0
+      ? true
+      : corsOrigins.length === 1
+        ? corsOrigins[0]
+        : corsOrigins;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "1mb" }));
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    next();
+  });
   app.use(
     cors({
-      origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN,
+      origin: corsOriginConfig,
       credentials: true,
     }),
   );
@@ -51,9 +66,11 @@ export function createApp(env: AppEnv): CreatedApp {
   const authRoutes = createAuthRoutes(tokenService, authMiddleware);
   const usersRoutes = createUsersRouter(userService, matchService);
   const matchesRoutes = createMatchesRouter(matchService);
+  const historyRoutes = createHistoryRouter(matchService, env.HISTORY_SYNC_API_KEY);
 
   app.use("/auth", authRoutes);
   app.use("/api/auth", authRoutes);
+  app.use("/api/history", historyRoutes);
   app.use("/api/protected", authMiddleware);
   app.use("/users", authMiddleware, usersRoutes);
   app.use("/matches", authMiddleware, matchesRoutes);

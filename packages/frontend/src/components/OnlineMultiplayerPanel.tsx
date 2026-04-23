@@ -2,6 +2,7 @@
 import { io, type Socket } from 'socket.io-client'
 import type { Edge, GameState, Player } from 'game-core'
 import { isEdgeTaken } from 'game-core'
+import { getAccessToken } from '../services/auth'
 
 type SocketEventName =
   | 'join_room'
@@ -268,7 +269,17 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     setConnectionState('connecting')
     setStatusText('Đang kết nối backend...')
 
+    const accessToken = getAccessToken()
+    if (!accessToken) {
+      setErrorText('Chưa đăng nhập. Vui lòng đăng nhập trước.')
+      exitToHome('Chưa đăng nhập')
+      return
+    }
+
     const socket = io(BACKEND_URL, {
+      auth: {
+        token: accessToken,
+      },
       transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -406,6 +417,9 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
   const joinRoom = useCallback(
     (mode: 'create' | 'join') => {
       const socket = socketRef.current || connectSocket()
+      if (!socket) {
+        return
+      }
       const nextRoomId = roomId.trim() || makeId('room')
 
       setRoomId(nextRoomId)

@@ -109,6 +109,10 @@ export class UserStore {
     return user;
   }
 
+  values(): User[] {
+    return [...this.users.values()];
+  }
+
   /**
    * Clear all users (for testing)
    */

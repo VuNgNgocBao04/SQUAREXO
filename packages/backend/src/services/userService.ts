@@ -88,6 +88,14 @@ export class UserService {
 
   async createUser(input: RegisterUserInput): Promise<AuthUser> {
     if (!this.prisma) {
+      // Check for duplicates before creating to prevent race conditions
+      if (userStore.findByEmail(input.email)) {
+        throw new UserStoreError("USER_EXISTS_EMAIL", `User with email ${input.email} already exists`);
+      }
+      if (userStore.findByUsername(input.username)) {
+        throw new UserStoreError("USER_EXISTS_USERNAME", `User with username ${input.username} already exists`);
+      }
+
       const user = userStore.createUser({
         id: randomUUID(),
         username: input.username,
