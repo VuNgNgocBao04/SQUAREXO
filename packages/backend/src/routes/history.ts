@@ -64,7 +64,7 @@ export function createHistoryRouter(matchService: MatchService, syncApiKey?: str
     }
 
     const result = await matchService.getWalletHistory(parsed.data.wallet, parsed.data.page, parsed.data.limit);
-    return res.status(200).json(result.items);
+    return res.status(200).json(result);
   });
 
   router.post("/sync", async (req: Request, res: Response) => {

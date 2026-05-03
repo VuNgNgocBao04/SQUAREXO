@@ -103,6 +103,11 @@ function saveRoomId(roomId: string): void {
 }
 
 function loadPlayerId(): string {
+  const existing = sessionStorage.getItem(SESSION_PLAYER_KEY)
+  if (existing) {
+    return existing
+  }
+
   const next = makeId('player')
   sessionStorage.setItem(SESSION_PLAYER_KEY, next)
   return next
@@ -371,7 +376,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     })
 
     socket.on(SocketEvents.ERROR, (payload: ErrorPayload) => {
-      if (waitingJoinRef.current && !autoHealAttemptedRef.current && isDuplicatePlayerIdError(payload)) {
+      if (!getAccessToken() && waitingJoinRef.current && !autoHealAttemptedRef.current && isDuplicatePlayerIdError(payload)) {
         autoHealAttemptedRef.current = true
         const nextPlayerId = regeneratePlayerId()
         const retryRoomId = activeRoomRef.current || roomId.trim()

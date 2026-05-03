@@ -417,36 +417,6 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
       try {
         const payload = parsePayload(chatMessageSchema, rawPayload);
         const room = options.roomManager.getRoom(payload.roomId);
-        if (!room) {
-          throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
-            roomId: payload.roomId,
-          });
-        }
-
-        if (!room.socketToPlayerId.has(socket.id)) {
-          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to this room");
-        }
-
-        const senderPlayerId = room.socketToPlayerId.get(socket.id);
-        if (!senderPlayerId) {
-          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to this room");
-        }
-
-        io.to(payload.roomId).emit(SocketEvents.CHAT_MESSAGE_BROADCAST, {
-          roomId: payload.roomId,
-          playerId: senderPlayerId,
-          message: payload.message,
-          sentAt: Date.now(),
-        });
-      } catch (error) {
-        emitError(socket, error);
-      }
-    });
-
-    socket.on(SocketEvents.CHAT_MESSAGE, (rawPayload: unknown) => {
-      try {
-        const payload = parsePayload(chatMessageSchema, rawPayload);
-        const room = options.roomManager.getRoom(payload.roomId);
 
         if (!room) {
           throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {

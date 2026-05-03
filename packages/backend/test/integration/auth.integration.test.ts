@@ -7,7 +7,6 @@ import { JwtTokenService } from "../../src/services/authService";
 import { createAuthMiddleware } from "../../src/http/authMiddleware";
 import { userStore } from "../../src/store/userStore";
 import type { AppEnv } from "../../src/config/env";
-import { randomUUID } from "crypto";
 
 describe("Auth API Routes", () => {
   let app: Express;
@@ -89,17 +88,42 @@ describe("Auth API Routes", () => {
 
     it("should register user with optional walletAddress", async () => {
       const suffix = `${testRunId}_wallet_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const walletAddress = `0x${suffix.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
       const res = await request(app)
         .post("/api/auth/register")
         .send({
           username: `user_${suffix}`,
           email: `${suffix}@example.com`,
           password: "password123",
-          walletAddress: "0x1234567890abcdef",
+          walletAddress,
         });
 
       expect(res.status).toBe(201);
-      expect(res.body.user.walletAddress).toBe("0x1234567890abcdef");
+      expect(res.body.user.walletAddress).toBe(walletAddress);
+    });
+
+    it("should reject duplicate walletAddress across users", async () => {
+      const suffix = `${testRunId}_dup_wallet_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const walletAddress = `0x${suffix.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}_1`,
+        email: `${suffix}_1@example.com`,
+        password: "password123",
+        walletAddress,
+      });
+
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}_2`,
+          email: `${suffix}_2@example.com`,
+          password: "password123",
+          walletAddress,
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("WALLET_IN_USE");
     });
 
     it("should reject duplicate email", async () => {
@@ -522,6 +546,61 @@ describe("Auth API Routes", () => {
 
       expect(res.status).toBe(401);
       expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+  });
+
+  describe("PUT /api/auth/wallet", () => {
+    let accessToken: string;
+    let otherAccessToken: string;
+
+    beforeEach(async () => {
+      const primarySuffix = `${testRunId}_wallet_link_${testCounter}`;
+      const secondarySuffix = `${testRunId}_wallet_conflict_${testCounter}`;
+
+      const primary = await request(app).post("/api/auth/register").send({
+        username: `user_${primarySuffix}`,
+        email: `${primarySuffix}@example.com`,
+        password: "password123",
+      });
+
+      const secondary = await request(app).post("/api/auth/register").send({
+        username: `user_${secondarySuffix}`,
+        email: `${secondarySuffix}@example.com`,
+        password: "password123",
+      });
+
+      accessToken = primary.body.accessToken;
+      otherAccessToken = secondary.body.accessToken;
+    });
+
+    it("should link a wallet to the authenticated account", async () => {
+      const walletAddress = `0x${`${testRunId}${testCounter}wallet`.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      const res = await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .send({ walletAddress });
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.walletAddress).toBe(walletAddress);
+    });
+
+    it("should reject linking a wallet that is already linked to another user", async () => {
+      const walletAddress = `0x${`${testRunId}${testCounter}linked`.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${otherAccessToken}`)
+        .send({ walletAddress })
+        .expect(200);
+
+      const res = await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .send({ walletAddress });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("WALLET_IN_USE");
     });
   });
 
