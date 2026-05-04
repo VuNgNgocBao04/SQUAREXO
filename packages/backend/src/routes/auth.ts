@@ -7,11 +7,13 @@ import type { UserService } from "../services/userService";
 import type { AuthenticatedRequest } from "../middleware/auth";
 import { UserStoreError } from "../store/userStore";
 
+const evmAddressRegex = /^0x[a-fA-F0-9]{40}$/;
+
 const registerSchema = z.object({
   username: z.string().trim().min(3).max(50),
   password: z.string().min(6).max(128),
   email: z.string().trim().toLowerCase().email().optional(),
-  walletAddress: z.string().trim().min(6).optional(),
+  walletAddress: z.string().trim().regex(evmAddressRegex, "Invalid EVM wallet address").optional(),
   avatarUrl: z.string().url().optional(),
 });
 
@@ -26,6 +28,10 @@ const loginSchema = z.object({
 
 const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1),
+});
+
+const linkWalletSchema = z.object({
+  walletAddress: z.string().trim().regex(evmAddressRegex, "Invalid EVM wallet address"),
 });
 
 export function createAuthRouter(
@@ -85,8 +91,8 @@ export function createAuthRouter(
     } catch (error) {
       if (error instanceof UserStoreError) {
         return res.status(409).json({
-          error: "User already exists",
-          code: "USER_EXISTS",
+          error: error.code === "USER_EXISTS_WALLET" ? "Wallet already linked" : "User already exists",
+          code: error.code === "USER_EXISTS_WALLET" ? "WALLET_IN_USE" : "USER_EXISTS",
         });
       }
 
@@ -208,6 +214,58 @@ export function createAuthRouter(
     tokenService.revokeRefreshToken(parsed.data.refreshToken);
     return res.status(200).json({ success: true });
   });
+
+  router.put(
+    "/wallet",
+    authMiddleware
+      || ((req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        if (!req.user) {
+          return res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+        }
+        return next();
+      }),
+    async (req: AuthenticatedRequest, res: Response) => {
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+      }
+
+      const parsed = linkWalletSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Validation error",
+          code: "VALIDATION_ERROR",
+          details: parsed.error.issues,
+        });
+      }
+
+      try {
+        const user = await userService.linkWallet(req.user.userId, parsed.data.walletAddress);
+        return res.status(200).json({
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            walletAddress: user.walletAddress,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          },
+        });
+      } catch (error) {
+        if (error instanceof UserStoreError) {
+          return res.status(409).json({
+            error: error.message,
+            code: "WALLET_IN_USE",
+          });
+        }
+
+        return res.status(500).json({
+          error: "Internal server error",
+          code: "INTERNAL_ERROR",
+        });
+      }
+    },
+  );
 
   router.get(
     "/me",

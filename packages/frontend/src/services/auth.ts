@@ -39,17 +39,37 @@ export async function register(
   return data
 }
 
-export async function login(email: string, password: string): Promise<AuthResponse> {
+export async function login(identifier: string, password: string): Promise<AuthResponse> {
   const response = await fetch(`${AUTH_API_BASE}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ identifier, password }),
   })
 
   const data = await readJsonResponse<AuthResponse>(response, 'Login failed')
   saveTokens(data.accessToken, data.refreshToken)
   saveUser(data.user)
   return data
+}
+
+export async function linkWallet(walletAddress: string): Promise<User> {
+  const accessToken = getAccessToken()
+  if (!accessToken) {
+    throw new Error('Unauthorized')
+  }
+
+  const response = await fetch(`${AUTH_API_BASE}/wallet`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ walletAddress }),
+  })
+
+  const data = await readJsonResponse<{ user: User }>(response, 'Link wallet failed')
+  saveUser(data.user)
+  return data.user
 }
 
 export function logout(): void {
@@ -96,8 +116,12 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string):
     if (contentType.includes('application/json')) {
       try {
         const parsed = JSON.parse(bodyText) as { error?: string; message?: string }
-        throw new Error(parsed.error || parsed.message || fallbackMessage)
-      } catch {
+        const message = parsed.error || parsed.message || fallbackMessage
+        throw new Error(message)
+      } catch (error) {
+        if (error instanceof Error) {
+          throw error
+        }
         throw new Error(fallbackMessage)
       }
     }

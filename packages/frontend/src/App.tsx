@@ -3,6 +3,14 @@ import { io, type Socket } from 'socket.io-client'
 import { createGame, chooseAIMove, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
 import { ethers } from 'ethers'
 import * as sapphire from '@oasisprotocol/sapphire-paratime'
+import {
+  getAccessToken,
+  getUser as getStoredAuthUser,
+  linkWallet as linkWalletToBackend,
+  login as loginWithBackend,
+  logout as logoutFromBackend,
+  register as registerWithBackend,
+} from './services/auth'
 import './App.css'
 
 type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
@@ -15,6 +23,7 @@ type User = {
   id: string
   username: string
   email?: string
+  walletAddress?: string
   avatar?: string
   joinedDate?: string
 }
@@ -224,6 +233,10 @@ function createRuntimePlayerId() {
   return `player_${Math.random().toString(36).slice(2, 14)}`
 }
 
+function formatWalletLabel(address: string) {
+  return `${address.slice(0, 8)}...${address.slice(-6)}`
+}
+
 function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem('dbTheme')
@@ -233,6 +246,18 @@ function App() {
   // Auth state
   const [authUser, setAuthUser] = useState<User | null>(() => {
     try {
+      const savedAuthUser = getStoredAuthUser()
+      if (savedAuthUser) {
+        return {
+          id: savedAuthUser.id,
+          username: savedAuthUser.username,
+          email: savedAuthUser.email,
+          walletAddress: savedAuthUser.walletAddress,
+          avatar: '🎮',
+          joinedDate: savedAuthUser.createdAt ? new Date(savedAuthUser.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+      }
+
       const saved = localStorage.getItem('dbAuthUser')
       return saved ? (JSON.parse(saved) as User) : null
     } catch {
@@ -264,6 +289,7 @@ function App() {
 
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
+  const [, setWalletAccount] = useState<string | null>(null)
   const [walletBalance, setWalletBalance] = useState('0.0000')
   const [walletPending, setWalletPending] = useState(false)
   const [chainStatus, setChainStatus] = useState<'idle' | 'staking' | 'playing' | 'settling' | 'settled'>('idle')
@@ -413,8 +439,9 @@ function App() {
       throw new Error(`History fetch failed (${response.status})`)
     }
 
-    const data = (await response.json()) as { items?: ServerHistoryRecord[] }
-    return Array.isArray(data.items) ? data.items.map(fromServerHistoryRecord) : []
+    const data = (await response.json()) as { items?: ServerHistoryRecord[] } | ServerHistoryRecord[]
+    const items = Array.isArray(data) ? data : data.items
+    return Array.isArray(items) ? items.map(fromServerHistoryRecord) : []
   }, [fromServerHistoryRecord])
 
   const setCurrentPlayerSafe = useCallback((player: number) => {
@@ -503,11 +530,12 @@ function App() {
   }, [])
 
   const getChatAuthor = useCallback((playerId: string) => {
-    if (playerId === clientPlayerIdRef.current) {
+    const currentIdentityId = authUser?.id ?? getStoredAuthUser()?.id ?? clientPlayerIdRef.current
+    if (playerId === currentIdentityId) {
       return 'Bạn'
     }
     return 'Đối thủ'
-  }, [])
+  }, [authUser])
 
   const edgeToLine = useCallback((edge: CoreEdge): Line => {
     if (edge.from.row === edge.to.row) {
@@ -643,6 +671,10 @@ function App() {
     disconnectOnlineSocket()
 
     const socket = io(BACKEND_URL, {
+      auth: (() => {
+        const token = getAccessToken()
+        return token ? { token } : { playerId: clientPlayerIdRef.current }
+      })(),
       transports: ['websocket'],
       timeout: 5000,
       reconnection: true,
@@ -785,12 +817,21 @@ function App() {
         setRoomCodeSafe(code)
         setScreen('waiting')
 
-        socket.emit('join_room', {
+        const payload = {
           roomId: code,
           rows: gridSizeRef.current,
           cols: gridSizeRef.current,
-          playerId: clientPlayerIdRef.current,
-        })
+        }
+
+        if (!getAccessToken()) {
+          socket.emit('join_room', {
+            ...payload,
+            playerId: clientPlayerIdRef.current,
+          })
+          return
+        }
+
+        socket.emit('join_room', payload)
       } catch {
         showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
       }
@@ -1256,6 +1297,12 @@ function App() {
         throw new Error('Stake phải lớn hơn 0')
       }
 
+      // Allow realtime room flow even when blockchain contract is not configured.
+      if (!CONTRACT_ADDRESS) {
+        setChainStatus('playing')
+        return 'offchain-mode'
+      }
+
       const value = ethers.parseEther(amount.toString())
       const { contract } = await withContractSigner()
 
@@ -1287,6 +1334,22 @@ function App() {
 
   const createRoom = useCallback(() => {
     const run = async () => {
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before creating an online room')
+        return
+      }
+      if (!getAccessToken() || !authUser) {
+        showToast('HÃ£y Ä‘Äƒng nháº­p trÆ°á»›c khi táº¡o phÃ²ng online')
+        return
+      }
+      if (!getAccessToken() || !authUser) {
+        showToast('HÃ£y Ä‘Äƒng nháº­p trÆ°á»›c khi vÃ o phÃ²ng online')
+        return
+      }
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before joining an online room')
+        return
+      }
       if (!walletConnected) {
         showToast('Hãy kết nối ví trước khi tạo phòng cược')
         return
@@ -1295,7 +1358,11 @@ function App() {
       const code = genRoomCode()
       try {
         const txHash = await lockStakeOnChain(code, 'create')
-        showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
+        if (txHash === 'offchain-mode') {
+          showToast('Chưa cấu hình contract, phòng chạy ở chế độ realtime off-chain')
+        } else {
+          showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Không stake được khi tạo phòng'
         showToast(message)
@@ -1316,7 +1383,7 @@ function App() {
     }
 
     void run()
-  }, [joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
+  }, [authUser, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
 
   const joinRoom = useCallback(() => {
     const run = async () => {
@@ -1329,10 +1396,19 @@ function App() {
         return
       }
 
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before joining an online room')
+        return
+      }
+
       const code = joinCode.trim().toUpperCase()
       try {
         const txHash = await lockStakeOnChain(code, 'join')
-        showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
+        if (txHash === 'offchain-mode') {
+          showToast('Chưa cấu hình contract, vào phòng ở chế độ realtime off-chain')
+        } else {
+          showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Không stake được khi vào phòng'
         showToast(message)
@@ -1354,7 +1430,7 @@ function App() {
     }
 
     void run()
-  }, [joinCode, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
+  }, [authUser, joinCode, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
 
   const sendChat = useCallback(() => {
     const message = chatMsg.trim()
@@ -1374,6 +1450,10 @@ function App() {
 
   const connectWallet = useCallback(() => {
     const connect = async () => {
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before linking a wallet')
+        return
+      }
       if (!window.ethereum) {
         showToast('Không tìm thấy MetaMask/WalletConnect provider trong trình duyệt')
         return
@@ -1420,15 +1500,28 @@ function App() {
         const signer = await browserProvider.getSigner()
         const address = await signer.getAddress()
         const balanceWei = await browserProvider.getBalance(address)
+        const normalizedAddress = address.toLowerCase()
+
+        const linkedUser = await linkWalletToBackend(address)
+        const nextAuthUser: User = {
+          id: linkedUser.id,
+          username: linkedUser.username,
+          email: linkedUser.email,
+          walletAddress: linkedUser.walletAddress,
+          avatar: authUser?.avatar ?? 'ðŸŽ®',
+          joinedDate: linkedUser.createdAt ? new Date(linkedUser.createdAt).toLocaleDateString('vi-VN') : authUser?.joinedDate,
+        }
+        setAuthUser(nextAuthUser)
+        localStorage.setItem('dbAuthUser', JSON.stringify(nextAuthUser))
 
         try {
-          await syncPendingHistoryToServer(address)
+          await syncPendingHistoryToServer(normalizedAddress)
         } catch (error) {
           console.error('Failed to sync pending history', error)
         }
 
         try {
-          const remoteHistory = await fetchHistoryFromServer(address)
+          const remoteHistory = await fetchHistoryFromServer(normalizedAddress)
           if (remoteHistory.length > 0) {
             setGameHistory(remoteHistory)
             saveLocalHistory(remoteHistory)
@@ -1438,7 +1531,8 @@ function App() {
         }
 
         setWalletConnected(true)
-        setWalletAddress(`${address.slice(0, 8)}...${address.slice(-6)}`)
+        setWalletAccount(normalizedAddress)
+        setWalletAddress(formatWalletLabel(address))
         setWalletBalance(ethers.formatEther(balanceWei))
         showToast(`Kết nối ví thành công trên ${OASIS_CHAIN_NAME}`)
       } catch (error) {
@@ -1450,7 +1544,7 @@ function App() {
     }
 
     void connect()
-  }, [fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
+  }, [authUser, fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
 
   useEffect(() => {
     const ethereum = window.ethereum
@@ -1461,14 +1555,26 @@ function App() {
     const onAccountsChanged = (accounts: unknown) => {
       if (!Array.isArray(accounts) || accounts.length === 0 || typeof accounts[0] !== 'string') {
         setWalletConnected(false)
+        setWalletAccount(null)
         setWalletAddress('Chưa kết nối')
         setWalletBalance('0.0000')
         return
       }
 
-      const account = accounts[0]
+      const account = accounts[0].toLowerCase()
+      const linkedWallet = authUser?.walletAddress?.toLowerCase()
+      if (linkedWallet && linkedWallet !== account) {
+        setWalletConnected(false)
+        setWalletAccount(null)
+        setWalletAddress('Wallet changed')
+        setWalletBalance('0.0000')
+        showToast('Detected a different wallet. Please reconnect the linked wallet.')
+        return
+      }
+
       setWalletConnected(true)
-      setWalletAddress(`${account.slice(0, 8)}...${account.slice(-6)}`)
+      setWalletAccount(account)
+      setWalletAddress(formatWalletLabel(account))
       void refreshWalletBalance()
     }
 
@@ -1483,7 +1589,7 @@ function App() {
       ethereum.removeListener?.('accountsChanged', onAccountsChanged)
       ethereum.removeListener?.('chainChanged', onChainChanged)
     }
-  }, [refreshWalletBalance])
+  }, [authUser, refreshWalletBalance, showToast])
 
   const playAgain = useCallback(() => {
     setModalState((prev) => ({ ...prev, open: false }))
@@ -1599,6 +1705,29 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
 
+    void loginWithBackend(loginForm.username, loginForm.password)
+      .then(({ user: apiUser }) => {
+        const user: User = {
+          id: apiUser.id,
+          username: apiUser.username,
+          email: apiUser.email,
+          walletAddress: apiUser.walletAddress,
+          avatar: '🎮',
+          joinedDate: apiUser.createdAt ? new Date(apiUser.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+        setAuthUser(user)
+        localStorage.setItem('dbAuthUser', JSON.stringify(user))
+        setLoginForm({ username: '', password: '' })
+        setScreen('home')
+        setAuthLoading(false)
+        showToast('Đăng nhập thành công!')
+      })
+      .catch((error: unknown) => {
+        setAuthLoading(false)
+        setAuthError(error instanceof Error ? error.message : 'Đăng nhập thất bại')
+      })
+    return
+
     // Mock login
     window.setTimeout(() => {
       const user: User = {
@@ -1633,6 +1762,28 @@ function App() {
     setAuthError('')
     setAuthLoading(true)
 
+    void registerWithBackend(registerForm.username, registerForm.email, registerForm.password)
+      .then(({ user: apiUser }) => {
+        const user: User = {
+          id: apiUser.id,
+          username: apiUser.username,
+          email: apiUser.email,
+          avatar: '🎮',
+          joinedDate: apiUser.createdAt ? new Date(apiUser.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+        setAuthUser(user)
+        localStorage.setItem('dbAuthUser', JSON.stringify(user))
+        setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+        setScreen('home')
+        setAuthLoading(false)
+        showToast('Đăng ký thành công!')
+      })
+      .catch((error: unknown) => {
+        setAuthLoading(false)
+        setAuthError(error instanceof Error ? error.message : 'Đăng ký thất bại')
+      })
+    return
+
     // Mock register
     window.setTimeout(() => {
       const user: User = {
@@ -1652,7 +1803,12 @@ function App() {
   }, [registerForm, showToast])
 
   const handleLogout = useCallback(() => {
+    logoutFromBackend()
     setAuthUser(null)
+    setWalletConnected(false)
+    setWalletAccount(null)
+    setWalletAddress('ChÆ°a káº¿t ná»‘i')
+    setWalletBalance('0.0000')
     localStorage.removeItem('dbAuthUser')
     setScreen('auth')
     setAuthTab('login')

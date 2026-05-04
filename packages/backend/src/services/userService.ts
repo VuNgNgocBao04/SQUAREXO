@@ -44,6 +44,10 @@ export type RegisterUserInput = {
 export class UserService {
   private readonly prisma = getPrismaClient();
 
+  private normalizeWalletAddress(walletAddress?: string): string | undefined {
+    return walletAddress?.trim().toLowerCase() || undefined;
+  }
+
   private isPrismaUniqueError(error: unknown): boolean {
     return !!(
       typeof error === "object"
@@ -86,7 +90,59 @@ export class UserService {
     };
   }
 
+  private async assertNoDuplicateIdentity(input: { username: string; email: string; walletAddress?: string }): Promise<void> {
+    if (!this.prisma) {
+      return;
+    }
+
+    const clauses: Array<Record<string, unknown>> = [
+      {
+        username: {
+          equals: input.username,
+          mode: "insensitive",
+        },
+      },
+      {
+        email: input.email.toLowerCase(),
+      },
+    ];
+
+    const normalizedWallet = this.normalizeWalletAddress(input.walletAddress);
+    if (normalizedWallet) {
+      clauses.push({
+        walletAddress: normalizedWallet,
+      });
+    }
+
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        OR: clauses as any,
+      },
+      select: {
+        username: true,
+        email: true,
+        walletAddress: true,
+      },
+    });
+
+    if (!existing) {
+      return;
+    }
+
+    if (existing.email === input.email.toLowerCase()) {
+      throw new UserStoreError("USER_EXISTS_EMAIL", "User already exists");
+    }
+
+    if (normalizedWallet && existing.walletAddress?.toLowerCase() === normalizedWallet) {
+      throw new UserStoreError("USER_EXISTS_WALLET", "Wallet already linked to another account");
+    }
+
+    throw new UserStoreError("USER_EXISTS_USERNAME", "User already exists");
+  }
+
   async createUser(input: RegisterUserInput): Promise<AuthUser> {
+    const normalizedWallet = this.normalizeWalletAddress(input.walletAddress);
+
     if (!this.prisma) {
       // Check for duplicates before creating to prevent race conditions
       if (userStore.findByEmail(input.email)) {
@@ -95,6 +151,9 @@ export class UserService {
       if (userStore.findByUsername(input.username)) {
         throw new UserStoreError("USER_EXISTS_USERNAME", `User with username ${input.username} already exists`);
       }
+      if (normalizedWallet && userStore.findByWalletAddress(normalizedWallet)) {
+        throw new UserStoreError("USER_EXISTS_WALLET", `Wallet ${normalizedWallet} already exists`);
+      }
 
       const user = userStore.createUser({
         id: randomUUID(),
@@ -102,7 +161,7 @@ export class UserService {
         email: input.email,
         passwordHash: input.passwordHash,
         role: "user",
-        walletAddress: input.walletAddress,
+        walletAddress: normalizedWallet,
         avatarUrl: input.avatarUrl,
         elo: 1000,
         createdAt: new Date(),
@@ -112,19 +171,32 @@ export class UserService {
     }
 
     try {
+      await this.assertNoDuplicateIdentity({
+        ...input,
+        walletAddress: normalizedWallet,
+      });
       const created = await this.prisma.user.create({
         data: {
           username: input.username,
           email: input.email,
           passwordHash: input.passwordHash,
-          walletAddress: input.walletAddress,
+          walletAddress: normalizedWallet,
           avatarUrl: input.avatarUrl,
         },
       });
       return this.fromPrismaUser(created);
     } catch (error) {
       if (this.isPrismaUniqueError(error)) {
-        throw new UserStoreError("USER_EXISTS_USERNAME", "User already exists");
+        const message =
+          typeof error === "object" && error && "meta" in error
+            ? JSON.stringify((error as { meta?: unknown }).meta)
+            : "";
+        const code = message.includes("wallet")
+          ? "USER_EXISTS_WALLET"
+          : message.includes("email")
+            ? "USER_EXISTS_EMAIL"
+            : "USER_EXISTS_USERNAME";
+        throw new UserStoreError(code, "User already exists");
       }
       throw error;
     }
@@ -165,7 +237,14 @@ export class UserService {
       return { ...user, elo: user.elo ?? 1000 };
     }
 
-    const user = await this.prisma.user.findUnique({ where: { username } });
+    const user = await this.prisma.user.findFirst({
+      where: {
+        username: {
+          equals: username,
+          mode: "insensitive",
+        },
+      },
+    });
     return user ? this.fromPrismaUser(user) : null;
   }
 
@@ -175,6 +254,67 @@ export class UserService {
       return byEmail;
     }
     return this.findByUsername(identifier);
+  }
+
+  async findByWalletAddress(walletAddress: string): Promise<AuthUser | null> {
+    const normalizedWallet = this.normalizeWalletAddress(walletAddress);
+    if (!normalizedWallet) {
+      return null;
+    }
+
+    if (!this.prisma) {
+      const user = userStore.findByWalletAddress(normalizedWallet);
+      if (!user) {
+        return null;
+      }
+      return { ...user, elo: user.elo ?? 1000 };
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { walletAddress: normalizedWallet } });
+    return user ? this.fromPrismaUser(user) : null;
+  }
+
+  async linkWallet(userId: string, walletAddress: string): Promise<AuthUser> {
+    const normalizedWallet = this.normalizeWalletAddress(walletAddress);
+    if (!normalizedWallet) {
+      throw new Error("Wallet address is required");
+    }
+
+    const existingOwner = await this.findByWalletAddress(normalizedWallet);
+    if (existingOwner && existingOwner.id !== userId) {
+      throw new UserStoreError("USER_EXISTS_WALLET", "Wallet already linked to another account");
+    }
+
+    const current = await this.findById(userId);
+    if (!current) {
+      throw new Error("User not found");
+    }
+
+    if (current.walletAddress && current.walletAddress.toLowerCase() !== normalizedWallet) {
+      throw new UserStoreError("USER_EXISTS_WALLET", "This account is already linked to another wallet");
+    }
+
+    if (!this.prisma) {
+      const updated = userStore.updateUser({
+        ...current,
+        walletAddress: normalizedWallet,
+        updatedAt: new Date(),
+      });
+      return { ...updated, elo: updated.elo ?? 1000 };
+    }
+
+    try {
+      const updated = await this.prisma.user.update({
+        where: { id: userId },
+        data: { walletAddress: normalizedWallet },
+      });
+      return this.fromPrismaUser(updated);
+    } catch (error) {
+      if (this.isPrismaUniqueError(error)) {
+        throw new UserStoreError("USER_EXISTS_WALLET", "Wallet already linked to another account");
+      }
+      throw error;
+    }
   }
 
   async updateElo(userId: string, nextElo: number): Promise<void> {

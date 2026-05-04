@@ -1,6 +1,6 @@
 import type { User } from "../types/auth";
 
-export type UserStoreErrorCode = "USER_EXISTS_EMAIL" | "USER_EXISTS_USERNAME";
+export type UserStoreErrorCode = "USER_EXISTS_EMAIL" | "USER_EXISTS_USERNAME" | "USER_EXISTS_WALLET";
 
 export class UserStoreError extends Error {
   readonly code: UserStoreErrorCode;
@@ -19,6 +19,7 @@ export class UserStore {
   private users: Map<string, User> = new Map();
   private usersByEmail: Map<string, string> = new Map();
   private usersByUsername: Map<string, string> = new Map();
+  private usersByWallet: Map<string, string> = new Map();
 
   private normalize(value: string): string {
     return value.toLowerCase();
@@ -30,6 +31,7 @@ export class UserStore {
   createUser(user: User): User {
     const normalizedEmail = this.normalize(user.email);
     const normalizedUsername = this.normalize(user.username);
+    const normalizedWallet = user.walletAddress ? this.normalize(user.walletAddress) : undefined;
 
     if (this.usersByEmail.has(normalizedEmail)) {
       throw new UserStoreError("USER_EXISTS_EMAIL", `User with email ${user.email} already exists`);
@@ -37,10 +39,16 @@ export class UserStore {
     if (this.usersByUsername.has(normalizedUsername)) {
       throw new UserStoreError("USER_EXISTS_USERNAME", `User with username ${user.username} already exists`);
     }
+    if (normalizedWallet && this.usersByWallet.has(normalizedWallet)) {
+      throw new UserStoreError("USER_EXISTS_WALLET", `Wallet ${user.walletAddress} already exists`);
+    }
 
     this.users.set(user.id, user);
     this.usersByEmail.set(normalizedEmail, user.id);
     this.usersByUsername.set(normalizedUsername, user.id);
+    if (normalizedWallet) {
+      this.usersByWallet.set(normalizedWallet, user.id);
+    }
     return user;
   }
 
@@ -69,6 +77,12 @@ export class UserStore {
     return this.users.get(userId);
   }
 
+  findByWalletAddress(walletAddress: string): User | undefined {
+    const userId = this.usersByWallet.get(this.normalize(walletAddress));
+    if (!userId) return undefined;
+    return this.users.get(userId);
+  }
+
   /**
    * Update user
    */
@@ -86,6 +100,8 @@ export class UserStore {
     const existingUsername = this.normalize(existing.username);
     const nextEmail = this.normalize(user.email);
     const nextUsername = this.normalize(user.username);
+    const existingWallet = existing.walletAddress ? this.normalize(existing.walletAddress) : undefined;
+    const nextWallet = user.walletAddress ? this.normalize(user.walletAddress) : undefined;
 
     if (existingEmail !== nextEmail) {
       const matchingUserId = this.usersByEmail.get(nextEmail);
@@ -105,6 +121,22 @@ export class UserStore {
       this.usersByUsername.set(nextUsername, user.id);
     }
 
+    if (existingWallet !== nextWallet) {
+      if (nextWallet) {
+        const matchingUserId = this.usersByWallet.get(nextWallet);
+        if (matchingUserId && matchingUserId !== user.id) {
+          throw new UserStoreError("USER_EXISTS_WALLET", `Wallet ${user.walletAddress} already exists`);
+        }
+      }
+
+      if (existingWallet) {
+        this.usersByWallet.delete(existingWallet);
+      }
+      if (nextWallet) {
+        this.usersByWallet.set(nextWallet, user.id);
+      }
+    }
+
     this.users.set(user.id, user);
     return user;
   }
@@ -120,6 +152,7 @@ export class UserStore {
     this.users.clear();
     this.usersByEmail.clear();
     this.usersByUsername.clear();
+    this.usersByWallet.clear();
   }
 }
 
