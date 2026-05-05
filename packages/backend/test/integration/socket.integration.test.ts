@@ -4,6 +4,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SocketEvents } from "../../src/contracts/events";
 import { createBackendServer } from "../../src/server";
+import { userStore } from "../../src/store/userStore";
 import type { AppEnv } from "../../src/config/env";
 
 type WaitOptions<T> = {
@@ -54,16 +55,19 @@ function waitConnected(socket: Socket, timeoutMs = 3000): Promise<void> {
   });
 }
 
-async function registerAndGetAccessToken(baseUrl: string, suffix: string): Promise<string> {
+async function registerAndGetAccessToken(baseUrl: string, suffix: string, counter: number, runId: number): Promise<string> {
+  const uniqueSuffix = `${runId}_${counter}_${suffix}`;
   const response = await request(baseUrl)
     .post("/api/auth/register")
     .send({
-      username: `socket_user_${suffix}`,
-      email: `socket_${suffix}@example.com`,
+      username: `socket_user_${uniqueSuffix}`,
+      email: `socket_${uniqueSuffix}@example.com`,
       password: "password123",
     });
 
-  expect(response.status).toBe(201);
+  if (response.status !== 201) {
+    throw new Error(`Failed to register user: ${response.status} - ${JSON.stringify(response.body)}`);
+  }
   expect(response.body).toHaveProperty("accessToken");
   return response.body.accessToken as string;
 }
@@ -95,8 +99,12 @@ describe("socket integration", () => {
 
   let baseUrl = "";
   let server: ReturnType<typeof createBackendServer>;
+  let testCounter = 0;
+  const testRunId = Date.now();
 
   beforeEach(async () => {
+    testCounter += 1;
+    userStore.clear();
     server = createBackendServer(env);
     await new Promise<void>((resolve) => {
       server.httpServer.listen(0, () => resolve());
@@ -106,6 +114,7 @@ describe("socket integration", () => {
   });
 
   afterEach(async () => {
+    userStore.clear();
     await server.close();
   });
 
@@ -127,8 +136,8 @@ describe("socket integration", () => {
   });
 
   it("allows two clients to join and play one valid move", async () => {
-    const token1 = await registerAndGetAccessToken(baseUrl, "match_1");
-    const token2 = await registerAndGetAccessToken(baseUrl, "match_2");
+    const token1 = await registerAndGetAccessToken(baseUrl, "match_1", testCounter, testRunId);
+    const token2 = await registerAndGetAccessToken(baseUrl, "match_2", testCounter, testRunId);
     const c1 = createAuthenticatedSocket(baseUrl, token1);
     const c2 = createAuthenticatedSocket(baseUrl, token2);
 
@@ -177,7 +186,7 @@ describe("socket integration", () => {
   });
 
   it("returns validation error for bad payload without crashing", async () => {
-    const token = await registerAndGetAccessToken(baseUrl, "validation_1");
+    const token = await registerAndGetAccessToken(baseUrl, "validation_1", testCounter, testRunId);
     const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
@@ -203,7 +212,7 @@ describe("socket integration", () => {
   });
 
   it("deduplicates make_move by actionId", async () => {
-    const token = await registerAndGetAccessToken(baseUrl, "dedupe_1");
+    const token = await registerAndGetAccessToken(baseUrl, "dedupe_1", testCounter, testRunId);
     const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
@@ -247,7 +256,7 @@ describe("socket integration", () => {
   });
 
   it("rejects duplicate or out-of-order client sequence", async () => {
-    const token = await registerAndGetAccessToken(baseUrl, "sequence_1");
+    const token = await registerAndGetAccessToken(baseUrl, "sequence_1", testCounter, testRunId);
     const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
@@ -295,7 +304,7 @@ describe("socket integration", () => {
   });
 
   it("rate-limits rapid make_move events per socket", async () => {
-    const token = await registerAndGetAccessToken(baseUrl, "ratelimit_1");
+    const token = await registerAndGetAccessToken(baseUrl, "ratelimit_1", testCounter, testRunId);
     const client = createAuthenticatedSocket(baseUrl, token);
 
     try {
@@ -347,8 +356,8 @@ describe("socket integration", () => {
   });
 
   it("rejects join_room when requested board size mismatches existing room", async () => {
-    const token1 = await registerAndGetAccessToken(baseUrl, "sizeguard_1");
-    const token2 = await registerAndGetAccessToken(baseUrl, "sizeguard_2");
+    const token1 = await registerAndGetAccessToken(baseUrl, "sizeguard_1", testCounter, testRunId);
+    const token2 = await registerAndGetAccessToken(baseUrl, "sizeguard_2", testCounter, testRunId);
     const c1 = createAuthenticatedSocket(baseUrl, token1);
     const c2 = createAuthenticatedSocket(baseUrl, token2);
 
@@ -376,9 +385,9 @@ describe("socket integration", () => {
   });
 
   it("releases previous room slot immediately when switching rooms", async () => {
-    const token1 = await registerAndGetAccessToken(baseUrl, "switch_1");
-    const token2 = await registerAndGetAccessToken(baseUrl, "switch_2");
-    const token3 = await registerAndGetAccessToken(baseUrl, "switch_3");
+    const token1 = await registerAndGetAccessToken(baseUrl, "switch_1", testCounter, testRunId);
+    const token2 = await registerAndGetAccessToken(baseUrl, "switch_2", testCounter, testRunId);
+    const token3 = await registerAndGetAccessToken(baseUrl, "switch_3", testCounter, testRunId);
     const c1 = createAuthenticatedSocket(baseUrl, token1);
     const c2 = createAuthenticatedSocket(baseUrl, token2);
     const c3 = createAuthenticatedSocket(baseUrl, token3);
@@ -427,8 +436,8 @@ describe("socket integration", () => {
   });
 
   it("plays full 1x1 match with two clients", async () => {
-    const token1 = await registerAndGetAccessToken(baseUrl, "fullmatch_1");
-    const token2 = await registerAndGetAccessToken(baseUrl, "fullmatch_2");
+    const token1 = await registerAndGetAccessToken(baseUrl, "fullmatch_1", testCounter, testRunId);
+    const token2 = await registerAndGetAccessToken(baseUrl, "fullmatch_2", testCounter, testRunId);
     const c1 = createAuthenticatedSocket(baseUrl, token1);
     const c2 = createAuthenticatedSocket(baseUrl, token2);
 

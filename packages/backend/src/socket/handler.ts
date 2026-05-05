@@ -13,10 +13,10 @@ import {
 import { metrics } from "../observability/metrics";
 import type { RoomManager } from "../room/roomManager";
 import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
+import type { BlockchainService } from "../services/blockchainService";
 import { parsePayload } from "../utils/validation";
 import type { JwtPayload } from "../types/auth";
 import type { MatchService } from "../services/matchService";
-import type { BlockchainService } from "../services/blockchainService";
 
 export type HandlerOptions = {
   roomManager: RoomManager;
@@ -417,24 +417,27 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
       try {
         const payload = parsePayload(chatMessageSchema, rawPayload);
         const room = options.roomManager.getRoom(payload.roomId);
+
         if (!room) {
           throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
             roomId: payload.roomId,
           });
         }
 
-        if (!room.socketToPlayerId.has(socket.id)) {
-          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to this room");
+        const playerId = room.socketToPlayerId.get(socket.id);
+        if (!playerId) {
+          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not in this room");
         }
 
-        const senderPlayerId = room.socketToPlayerId.get(socket.id);
-        if (!senderPlayerId) {
-          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to this room");
+        const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
+        if (!assignedPlayer) {
+          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to a player in this room");
         }
 
-        io.to(payload.roomId).emit(SocketEvents.CHAT_MESSAGE_BROADCAST, {
+        io.to(payload.roomId).emit(SocketEvents.CHAT_MESSAGE, {
           roomId: payload.roomId,
-          playerId: senderPlayerId,
+          playerId,
+          player: assignedPlayer,
           message: payload.message,
           sentAt: Date.now(),
         });

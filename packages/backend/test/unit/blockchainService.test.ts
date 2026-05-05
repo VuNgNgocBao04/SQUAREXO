@@ -46,15 +46,25 @@ describe("BlockchainService winner wallet guards", () => {
     DEDUPE_WINDOW_MS: 15000,
     ROOM_SWEEP_INTERVAL_MS: 5000,
     OASIS_RPC_URL: "https://testnet.sapphire.oasis.io",
+    OASIS_RPC_FALLBACK_URLS: "",
+    OASIS_EXPECTED_CHAIN_ID: 0x5aff,
     BACKEND_SIGNER_PRIVATE_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111",
     CONTRACT_ADDRESS: "0x1000000000000000000000000000000000000001",
+    BLOCKCHAIN_TX_TIMEOUT_MS: 45000,
+    HISTORY_SYNC_API_KEY: undefined,
   };
 
   it("wraps the Wallet with Sapphire when creating the contract", async () => {
+    vi.spyOn(ethers.JsonRpcProvider.prototype, "getNetwork").mockResolvedValue({
+      chainId: BigInt(baseEnv.OASIS_EXPECTED_CHAIN_ID),
+      name: "oasis-sapphire-testnet",
+    } as unknown as Awaited<ReturnType<ethers.JsonRpcProvider["getNetwork"]>>);
+
     const contract = await createSquarexoContract({
-      rpcUrl: baseEnv.OASIS_RPC_URL as string,
+      rpcUrls: [baseEnv.OASIS_RPC_URL as string],
       privateKey: baseEnv.BACKEND_SIGNER_PRIVATE_KEY as string,
       contractAddress: baseEnv.CONTRACT_ADDRESS as string,
+      expectedChainId: baseEnv.OASIS_EXPECTED_CHAIN_ID,
     });
 
     expect(wrapEthersSignerMock).toHaveBeenCalledTimes(1);

@@ -27,6 +27,22 @@ export type SaveMatchResultInput = {
   moves?: SaveMatchMoveInput[];
 };
 
+export type HistorySyncItem = {
+  roomId: string;
+  playerX?: string;
+  playerO?: string;
+  winnerPlayer: "X" | "O" | "draw";
+  scoreX: number;
+  scoreO: number;
+  totalMoves: number;
+  gridSize: number;
+  gameMode: "pvp" | "ai";
+  stakeRose: number;
+  txHash?: string;
+  startedAt?: string;
+  endedAt: string;
+};
+
 type InMemoryMatch = {
   id: string;
   roomId: string;
@@ -49,6 +65,64 @@ const inMemoryMatches = new Map<string, InMemoryMatch>();
 
 export class MatchService {
   private readonly prisma = getPrismaClient();
+
+  private toWinnerSymbol(winner: HistorySyncItem["winnerPlayer"]): "X" | "O" | "DRAW" {
+    if (winner === "draw") {
+      return "DRAW";
+    }
+
+    return winner;
+  }
+
+  private buildSyntheticEmail(seed: string): string {
+    return `${seed.toLowerCase().replace(/[^a-z0-9_]/g, "")}_${randomUUID()}@local.squarexo`;
+  }
+
+  private async ensureUserByWallet(walletAddress: string): Promise<string | null> {
+    if (!this.prisma) {
+      return null;
+    }
+
+    const normalized = walletAddress.toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { walletAddress: normalized } });
+    if (existing) {
+      return existing.id;
+    }
+
+    const seed = normalized.slice(2, 10);
+    const created = await this.prisma.user.create({
+      data: {
+        username: `wallet_${seed}_${Date.now().toString().slice(-6)}`,
+        email: this.buildSyntheticEmail(`wallet_${seed}`),
+        passwordHash: `wallet-auth-disabled:${seed}`,
+        walletAddress: normalized,
+      },
+    });
+
+    return created.id;
+  }
+
+  private async ensureSyntheticOpponent(label: "bot" | "opponent"): Promise<string | null> {
+    if (!this.prisma) {
+      return null;
+    }
+
+    const username = `squarexo_${label}`;
+    const existing = await this.prisma.user.findUnique({ where: { username } });
+    if (existing) {
+      return existing.id;
+    }
+
+    const created = await this.prisma.user.create({
+      data: {
+        username,
+        email: this.buildSyntheticEmail(username),
+        passwordHash: `synthetic-user:${label}`,
+      },
+    });
+
+    return created.id;
+  }
 
   private resolveWinner(scoreX: number, scoreO: number): MatchOutcome {
     if (scoreX > scoreO) return "X";
@@ -207,5 +281,99 @@ export class MatchService {
         totalPages: Math.ceil(total / safeLimit),
       },
     };
+  }
+
+  async getWalletHistory(walletAddress: string, page: number, limit: number) {
+    if (!this.prisma) {
+      return {
+        items: [] as Array<unknown>,
+        pagination: {
+          page: 1,
+          limit: Math.min(Math.max(limit, 1), 100),
+          total: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { walletAddress: walletAddress.toLowerCase() } });
+    if (!user) {
+      return {
+        items: [] as Array<unknown>,
+        pagination: {
+          page: Math.max(page, 1),
+          limit: Math.min(Math.max(limit, 1), 100),
+          total: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
+    return this.getUserMatches(user.id, page, limit);
+  }
+
+  async syncWalletHistory(walletAddress: string, items: HistorySyncItem[]): Promise<{ upserted: number }> {
+    if (!this.prisma || items.length === 0) {
+      return { upserted: 0 };
+    }
+
+    const ownerId = await this.ensureUserByWallet(walletAddress);
+    if (!ownerId) {
+      return { upserted: 0 };
+    }
+
+    const botId = await this.ensureSyntheticOpponent("bot");
+    const opponentId = await this.ensureSyntheticOpponent("opponent");
+    if (!botId || !opponentId) {
+      return { upserted: 0 };
+    }
+
+    let upserted = 0;
+    for (const item of items) {
+      const endedAt = new Date(item.endedAt);
+      const startedAt = item.startedAt ? new Date(item.startedAt) : new Date(endedAt.getTime() - 60_000);
+      if (Number.isNaN(endedAt.getTime()) || Number.isNaN(startedAt.getTime())) {
+        continue;
+      }
+
+      const winner = this.toWinnerSymbol(item.winnerPlayer);
+      const localOpponentId = item.gameMode === "ai" ? botId : opponentId;
+      const winnerUserId = winner === "X" ? ownerId : winner === "O" ? localOpponentId : null;
+
+      const duplicate = await this.prisma.match.findFirst({
+        where: {
+          roomId: item.roomId,
+          playerXId: ownerId,
+          playerOId: localOpponentId,
+          endedAt,
+        },
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        continue;
+      }
+
+      await this.prisma.match.create({
+        data: {
+          roomId: item.roomId,
+          playerXId: ownerId,
+          playerOId: localOpponentId,
+          winner,
+          winnerUserId,
+          boardRows: item.gridSize,
+          boardCols: item.gridSize,
+          totalMoves: item.totalMoves,
+          betAmount: new Prisma.Decimal(item.stakeRose),
+          txHash: item.txHash,
+          startedAt,
+          endedAt,
+        },
+      });
+
+      upserted += 1;
+    }
+
+    return { upserted };
   }
 }

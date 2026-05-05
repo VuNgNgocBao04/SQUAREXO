@@ -16,6 +16,7 @@ type ProcessedAction = {
 
 export type Room = {
   roomId: string;
+  startedAt: Date;
   gameState: GameState;
   stateVersion: number;
   matchStartedAt: Date;
@@ -53,6 +54,7 @@ export class RoomManager {
 
     const room: Room = {
       roomId,
+      startedAt: new Date(),
       gameState: initialState,
       stateVersion: 0,
       // matchStartedAt will be set once 2nd player joins (see assignSocket).

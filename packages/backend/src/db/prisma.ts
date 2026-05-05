@@ -33,3 +33,26 @@ export function getPrismaClient(): PrismaClient | null {
 
   return prisma;
 }
+
+export async function initDatabaseConnection(): Promise<void> {
+  const client = getPrismaClient();
+  if (!client) {
+    return;
+  }
+
+  await client.$connect();
+}
+
+export async function closeDatabaseConnection(): Promise<void> {
+  if (!prisma) {
+    return;
+  }
+
+  await prisma.$disconnect();
+
+  if (process.env.NODE_ENV !== "production") {
+    global.__squarexoPrisma = undefined;
+  }
+
+  prisma = null;
+}

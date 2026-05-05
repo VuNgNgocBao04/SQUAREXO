@@ -2,6 +2,7 @@
 import { io, type Socket } from 'socket.io-client'
 import type { Edge, GameState, Player } from 'game-core'
 import { isEdgeTaken } from 'game-core'
+import { getAccessToken } from '../services/auth'
 
 type SocketEventName =
   | 'join_room'
@@ -102,6 +103,11 @@ function saveRoomId(roomId: string): void {
 }
 
 function loadPlayerId(): string {
+  const existing = sessionStorage.getItem(SESSION_PLAYER_KEY)
+  if (existing) {
+    return existing
+  }
+
   const next = makeId('player')
   sessionStorage.setItem(SESSION_PLAYER_KEY, next)
   return next
@@ -268,7 +274,17 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     setConnectionState('connecting')
     setStatusText('Đang kết nối backend...')
 
+    const accessToken = getAccessToken()
+    if (!accessToken) {
+      setErrorText('Chưa đăng nhập. Vui lòng đăng nhập trước.')
+      exitToHome('Chưa đăng nhập')
+      return
+    }
+
     const socket = io(BACKEND_URL, {
+      auth: {
+        token: accessToken,
+      },
       transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -360,7 +376,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     })
 
     socket.on(SocketEvents.ERROR, (payload: ErrorPayload) => {
-      if (waitingJoinRef.current && !autoHealAttemptedRef.current && isDuplicatePlayerIdError(payload)) {
+      if (!getAccessToken() && waitingJoinRef.current && !autoHealAttemptedRef.current && isDuplicatePlayerIdError(payload)) {
         autoHealAttemptedRef.current = true
         const nextPlayerId = regeneratePlayerId()
         const retryRoomId = activeRoomRef.current || roomId.trim()
@@ -406,6 +422,9 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
   const joinRoom = useCallback(
     (mode: 'create' | 'join') => {
       const socket = socketRef.current || connectSocket()
+      if (!socket) {
+        return
+      }
       const nextRoomId = roomId.trim() || makeId('room')
 
       setRoomId(nextRoomId)

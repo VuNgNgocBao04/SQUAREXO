@@ -7,6 +7,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant BACKEND_SIGNER_ROLE = keccak256("BACKEND_SIGNER_ROLE");
+    uint256 public constant MAX_ROOM_ID_BYTES = 64;
 
     uint256 public immutable joinTimeoutSeconds;
     uint256 public immutable resultTimeoutSeconds;
@@ -47,6 +48,7 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     error InvalidBetAmount();
     error Unauthorized();
     error TransferFailed();
+    error InvalidRoomId();
 
     constructor(address admin, address backendSigner, uint256 joinTimeout, uint256 resultTimeout) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -56,6 +58,9 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function createMatch(string calldata roomId, uint256 betAmount) external payable whenNotPaused {
+        uint256 roomIdLength = bytes(roomId).length;
+        if (roomIdLength == 0 || roomIdLength > MAX_ROOM_ID_BYTES) revert InvalidRoomId();
+
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.None) revert InvalidMatchState();
         if (betAmount == 0 || msg.value != betAmount) revert InvalidBetAmount();
@@ -73,6 +78,9 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function joinMatch(string calldata roomId) external payable whenNotPaused {
+        uint256 roomIdLength = bytes(roomId).length;
+        if (roomIdLength == 0 || roomIdLength > MAX_ROOM_ID_BYTES) revert InvalidRoomId();
+
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.WaitingForOpponent) revert InvalidMatchState();
         if (m.creator == msg.sender) revert Unauthorized();
@@ -89,8 +97,12 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function submitResult(string calldata roomId, address winner) external whenNotPaused onlyRole(BACKEND_SIGNER_ROLE) {
+        uint256 roomIdLength = bytes(roomId).length;
+        if (roomIdLength == 0 || roomIdLength > MAX_ROOM_ID_BYTES) revert InvalidRoomId();
+
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.Active) revert InvalidMatchState();
+        if (block.timestamp > m.resultDeadline) revert InvalidMatchState();
 
         bool isDraw = winner == address(0);
         bool isValidWinner = winner == m.creator || winner == m.opponent;
@@ -104,6 +116,9 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function claimReward(string calldata roomId) external nonReentrant {
+        uint256 roomIdLength = bytes(roomId).length;
+        if (roomIdLength == 0 || roomIdLength > MAX_ROOM_ID_BYTES) revert InvalidRoomId();
+
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.Resolved) revert InvalidMatchState();
 
@@ -127,6 +142,9 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function cancelUnjoinedMatch(string calldata roomId) external nonReentrant {
+        uint256 roomIdLength = bytes(roomId).length;
+        if (roomIdLength == 0 || roomIdLength > MAX_ROOM_ID_BYTES) revert InvalidRoomId();
+
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.WaitingForOpponent) revert InvalidMatchState();
         if (msg.sender != m.creator) revert Unauthorized();
@@ -143,6 +161,9 @@ contract SquarexoMatch is AccessControl, Pausable, ReentrancyGuard {
     }
 
     function forceDrawOnTimeout(string calldata roomId) external {
+        uint256 roomIdLength = bytes(roomId).length;
+        if (roomIdLength == 0 || roomIdLength > MAX_ROOM_ID_BYTES) revert InvalidRoomId();
+
         Match storage m = matchesByRoom[roomId];
         if (m.status != MatchStatus.Active) revert InvalidMatchState();
         if (msg.sender != m.creator && msg.sender != m.opponent) revert Unauthorized();
