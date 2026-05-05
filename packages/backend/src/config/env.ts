@@ -62,4 +62,3 @@ export type AppEnv = z.infer<typeof envSchema>;
 export function loadEnv(): AppEnv {
   return envSchema.parse(process.env);
 }
-
