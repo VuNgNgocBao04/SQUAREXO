@@ -1,0 +1,27 @@
+{
+  "network": "sapphireTestnet",
+  "chainId": 23295,
+  "chainIdHex": "0x5aff",
+  "contractAddress": "0x2011069BBe427Fd168a65a364d9C205bCa7aa0C9",
+  "contractName": "SquarexoMatch",
+  "deployerAddress": "0x28dD788C47DADe8975dfFC5aa2295E3CF202d03E",
+  "deploymentDate": "2026-05-05",
+  "status": "deployed",
+  "constructorArgs": {
+    "admin": "0x28dD788C47DADe8975dfFC5aa2295E3CF202d03E",
+    "backendSigner": "0x28dD788C47DADe8975dfFC5aa2295E3CF202d03E",
+    "joinTimeoutSeconds": 900,
+    "resultTimeoutSeconds": 3600
+  },
+  "verificationStatus": "verified",
+  "verificationUrl": "https://repo.sourcify.dev/contracts/partial_match/23295/0x2011069BBe427Fd168a65a364d9C205bCa7aa0C9/",
+  "verificationMethod": "Sourcify (Etherscan does not support Sapphire testnet chain 23295)",
+  "testingStatus": "passed",
+  "testResults": {
+    "contractCodeExists": true,
+    "backendSignerRoleGranted": true,
+    "contractInteractionWorks": true,
+    "testedAt": "2026-05-05T14:00:00Z"
+  },
+  "notes": "✅ Verified on Sourcify. ✅ Integration tests passed. Ready for mainnet deployment checklist."
+}
