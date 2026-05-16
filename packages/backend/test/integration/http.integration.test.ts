@@ -14,6 +14,10 @@ describe("http integration", () => {
     JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
+    DATABASE_URL: "postgres://postgres:postgres@localhost:5432/squarexo_test",
+    DATABASE_POOL_MIN: 1,
+    DATABASE_POOL_MAX: 2,
+    DATABASE_STATEMENT_TIMEOUT_MS: 30000,
     PUBLIC_BASE_URL: "http://localhost:0",
     RECONNECT_TIMEOUT_MS: 15000,
     DEDUPE_WINDOW_MS: 10000,
@@ -24,7 +28,7 @@ describe("http integration", () => {
   let baseUrl = "";
 
   beforeEach(async () => {
-    server = createBackendServer(env);
+    server = createBackendServer(env, undefined as any);
     await new Promise<void>((resolve) => {
       server.httpServer.listen(0, () => resolve());
     });

@@ -1,6 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import type { Player } from "../types/gameCore";
 import { logger } from "../config/logger";
+import { getAuthenticatedUser } from "./authMiddleware";
 import { SocketEvents } from "../contracts/events";
 import { ContractError, ErrorCode, type ErrorPayload } from "../contracts/errors";
 import {
@@ -103,11 +104,14 @@ function assertPlayerTurn(player: Player | null, currentPlayer: Player): void {
 }
 
 function getSocketUser(socket: Socket): JwtPayload {
-  const user = (socket.data as { user?: JwtPayload }).user;
-  if (!user) {
-    throw new ContractError(ErrorCode.INTERNAL_ERROR, "Socket user context missing");
+  try {
+    return getAuthenticatedUser(socket);
+  } catch (error) {
+    throw new ContractError(
+      ErrorCode.INTERNAL_ERROR,
+      "Socket user context missing or invalid - socket must be authenticated before event handling",
+    );
   }
-  return user;
 }
 
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {

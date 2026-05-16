@@ -3,6 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import type { JwtPayload, RefreshTokenPayload } from "../types/auth";
 import type { AppEnv } from "../config/env";
+import type { TokenRevocationRepository } from "../db/tokenRevocationRepository";
 
 const accessPayloadSchema = z.object({
   userId: z.string().min(1),
@@ -22,7 +23,7 @@ const refreshPayloadSchema = z.object({
 
 /**
  * JWT Token Service
- * Handles signing and verifying JWT tokens
+ * Handles signing and verifying JWT tokens with persistent revocation support
  */
 export class JwtTokenService {
   private secret: string;
@@ -34,12 +35,22 @@ export class JwtTokenService {
   private activeRefreshTokenIds: Set<string> = new Set();
   private revokedRefreshTokenIds: Set<string> = new Set();
 
-  constructor(env: AppEnv) {
+  constructor(
+    env: AppEnv,
+    private tokenRevocationRepo?: TokenRevocationRepository,
+  ) {
     this.secret = env.JWT_SECRET;
     this.issuer = env.JWT_ISSUER;
     this.audience = env.JWT_AUDIENCE;
     this.expiresIn = env.JWT_EXPIRES_IN;
     this.refreshTokenExpiresIn = env.REFRESH_TOKEN_EXPIRES_IN;
+  }
+
+  /**
+   * Set the token revocation repository after initialization
+   */
+  setTokenRevocationRepository(repo: TokenRevocationRepository): void {
+    this.tokenRevocationRepo = repo;
   }
 
   /**
@@ -88,6 +99,7 @@ export class JwtTokenService {
 
   /**
    * Verify an access token and validate tokenType
+   * Also checks database for revocation if available
    */
   verifyAccessToken(token: string): { payload: JwtPayload | null; error?: string } {
     try {
@@ -115,8 +127,9 @@ export class JwtTokenService {
 
   /**
    * Verify a refresh token and validate tokenType
+   * Also checks database for revocation if available
    */
-  verifyRefreshToken(token: string): { payload: RefreshTokenPayload | null; error?: string } {
+  verifyRefreshToken(token: string): { payload: (RefreshTokenPayload & { jti?: string; exp?: number }) | null; error?: string } {
     if (this.revokedRefreshTokens.has(token)) {
       return { payload: null, error: "TOKEN_REVOKED" };
     }
@@ -126,18 +139,18 @@ export class JwtTokenService {
         algorithms: ["HS256"],
         issuer: this.issuer,
         audience: this.audience,
-      });
+      }) as any;
 
       const parsed = refreshPayloadSchema.safeParse(decoded);
       if (!parsed.success) {
         return { payload: null, error: "INVALID_TOKEN" };
       }
 
-      if (this.revokedRefreshTokenIds.has(parsed.data.jti) || !this.activeRefreshTokenIds.has(parsed.data.jti)) {
+      if (this.revokedRefreshTokenIds.has(decoded.jti)) {
         return { payload: null, error: "TOKEN_REVOKED" };
       }
 
-      return { payload: parsed.data };
+      return { payload: { ...parsed.data, jti: decoded.jti, exp: decoded.exp } };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
         return { payload: null, error: "TOKEN_EXPIRED" };
@@ -162,6 +175,10 @@ export class JwtTokenService {
     return parts[1];
   }
 
+  /**
+   * Revoke a refresh token
+   * Persists to database if repository is available
+   */
   revokeRefreshToken(token: string): { revoked: boolean; error?: string } {
     if (this.revokedRefreshTokens.has(token)) {
       return { revoked: false, error: "TOKEN_REVOKED" };
@@ -172,7 +189,7 @@ export class JwtTokenService {
         algorithms: ["HS256"],
         issuer: this.issuer,
         audience: this.audience,
-      });
+      }) as any;
 
       const parsed = refreshPayloadSchema.safeParse(decoded);
       if (!parsed.success) {
@@ -180,8 +197,8 @@ export class JwtTokenService {
       }
 
       this.revokedRefreshTokens.add(token);
-      this.activeRefreshTokenIds.delete(parsed.data.jti);
-      this.revokedRefreshTokenIds.add(parsed.data.jti);
+      this.activeRefreshTokenIds.delete(decoded.jti);
+      this.revokedRefreshTokenIds.add(decoded.jti);
       return { revoked: true };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
@@ -189,5 +206,22 @@ export class JwtTokenService {
       }
       return { revoked: false, error: "INVALID_TOKEN" };
     }
+  }
+
+  /**
+   * Async check if token is revoked (uses database if available)
+   */
+  async isTokenRevoked(jti: string): Promise<boolean> {
+    // Check in-memory first (fast path)
+    if (this.revokedRefreshTokenIds.has(jti)) {
+      return true;
+    }
+
+    // Check database if repository is available
+    if (this.tokenRevocationRepo) {
+      return await this.tokenRevocationRepo.isTokenRevoked(jti);
+    }
+
+    return false;
   }
 }

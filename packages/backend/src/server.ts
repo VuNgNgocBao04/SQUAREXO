@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import { Server as IOServer } from "socket.io";
 import type { AppEnv } from "./config/env";
 import { logger } from "./config/logger";
+import { initializeDatabase, closeDatabase, type DatabaseConnection } from "./db/client";
+import { createSocketAuthMiddleware } from "./socket/authMiddleware";
 import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
@@ -53,8 +55,8 @@ export type BackendServer = {
   close: () => Promise<void>;
 };
 
-export function createBackendServer(env: AppEnv): BackendServer {
-  const app = createApp(env);
+export function createBackendServer(env: AppEnv, db: DatabaseConnection): BackendServer {
+  const app = createApp(env, db);
   const httpServer = createServer(app);
   const io = new IOServer(httpServer, {
     cors: {
@@ -67,30 +69,9 @@ export function createBackendServer(env: AppEnv): BackendServer {
   if (!tokenService) {
     throw new Error("Token service is not available for socket authentication");
   }
-  io.use((socket, next) => {
-    const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
 
-    if (token) {
-      const verified = tokenService.verifyAccessToken(token);
-      if (verified.error || !verified.payload) {
-        next(new Error(verified.error ?? "INVALID_TOKEN"));
-        return;
-      }
-
-      socket.data.user = verified.payload as JwtPayload;
-      next();
-      return;
-    }
-
-    const guestUser = buildGuestSocketUser(socket.handshake.auth?.playerId);
-    if (!guestUser) {
-      next(new Error("MISSING_TOKEN"));
-      return;
-    }
-
-    socket.data.user = guestUser;
-    next();
-  });
+  // Use enhanced socket authentication middleware
+  io.use(createSocketAuthMiddleware(tokenService));
 
   const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);
   const roomSweepTimer = setInterval(() => {
@@ -112,6 +93,7 @@ export function createBackendServer(env: AppEnv): BackendServer {
     closed = true;
     clearInterval(roomSweepTimer);
     await io.close();
+    await closeDatabase();
     await new Promise<void>((resolve, reject) => {
       httpServer.close((error) => {
         if (error && error.message !== "Server is not running.") {
@@ -131,7 +113,10 @@ export function createBackendServer(env: AppEnv): BackendServer {
 }
 
 export async function startBackendServer(env: AppEnv): Promise<BackendServer> {
-  const server = createBackendServer(env);
+  // Initialize database
+  const db = initializeDatabase(env);
+
+  const server = createBackendServer(env, db);
 
   await new Promise<void>((resolve) => {
     server.httpServer.listen(env.PORT, () => {

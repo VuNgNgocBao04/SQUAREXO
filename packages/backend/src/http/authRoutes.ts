@@ -2,20 +2,35 @@ import { Router, type Response, type RequestHandler, type NextFunction } from "e
 import bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
 import { registerSchema, loginSchema, refreshTokenSchema } from "../contracts/schemas";
-import { UserStoreError, userStore } from "../store/userStore";
+import { UserStoreError } from "../db/userRepository";
+import type { UserRepository } from "../db/userRepository";
+import type { TokenRevocationRepository } from "../db/tokenRevocationRepository";
 import type { JwtTokenService } from "../services/authService";
 import type { AuthenticatedRequest } from "./authMiddleware";
 import type { User, AuthResponse } from "../types/auth";
 
 function isDuplicateUserError(error: unknown): error is UserStoreError {
-  return error instanceof UserStoreError
-    && (error.code === "USER_EXISTS_EMAIL" || error.code === "USER_EXISTS_USERNAME");
+  if (error instanceof UserStoreError) {
+    return error.code === "USER_EXISTS_EMAIL" || error.code === "USER_EXISTS_USERNAME";
+  }
+
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return code === "USER_EXISTS_EMAIL" || code === "USER_EXISTS_USERNAME";
 }
 
 /**
  * Create auth routes
  */
-export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?: RequestHandler) {
+export function createAuthRoutes(
+  tokenService: JwtTokenService,
+  userRepository: UserRepository,
+  tokenRevocationRepository: TokenRevocationRepository,
+  authMiddleware?: RequestHandler,
+) {
   const router = Router();
 
   /**
@@ -37,7 +52,9 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       const { username, email, password, walletAddress } = parsed.data;
 
       // Check if user already exists
-      if (userStore.findByEmail(email) || userStore.findByUsername(username)) {
+      const existingEmail = await userRepository.findByEmail(email);
+      const existingUsername = await userRepository.findByUsername(username);
+      if (existingEmail || existingUsername) {
         return res.status(409).json({
           error: "User already exists",
           code: "USER_EXISTS",
@@ -61,7 +78,7 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       };
 
       try {
-        userStore.createUser(user);
+        await userRepository.createUser(user);
       } catch (error) {
         if (isDuplicateUserError(error)) {
           return res.status(409).json({
@@ -128,7 +145,7 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       const { email, password } = parsed.data;
 
       // Find user by email
-      const user = userStore.findByEmail(email);
+      const user = await userRepository.findByEmail(email);
       if (!user) {
         return res.status(401).json({
           error: "Invalid email or password",
@@ -144,6 +161,9 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
           code: "INVALID_CREDENTIALS",
         });
       }
+
+      // Update last login
+      await userRepository.updateLastLogin(user.id);
 
       // Generate tokens
       const accessToken = tokenService.signAccessToken({
@@ -216,11 +236,18 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       }
 
       // Get user
-      const user = userStore.findById(result.payload.userId);
+      const user = await userRepository.findById(result.payload.userId);
       if (!user) {
         return res.status(401).json({
           error: "User not found",
           code: "USER_NOT_FOUND",
+        });
+      }
+
+      if (result.payload.jti && await tokenRevocationRepository.isTokenRevoked(result.payload.jti)) {
+        return res.status(401).json({
+          error: "Invalid or expired refresh token",
+          code: "REVOKED_REFRESH_TOKEN",
         });
       }
 
@@ -234,6 +261,16 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       });
 
       const nextRefreshToken = tokenService.signRefreshToken(user.id, result.payload.jti);
+      if (result.payload.jti) {
+        const exp = result.payload.exp ? new Date(result.payload.exp * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        await tokenRevocationRepository.revokeToken(
+          user.id,
+          result.payload.jti,
+          "refresh",
+          exp,
+          "rotation",
+        );
+      }
 
       return res.status(200).json({
         accessToken,
@@ -250,7 +287,7 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
 
   /**
    * POST /auth/logout
-   * Revoke refresh token for current session
+   * Revoke refresh token for current session (persistent across restarts)
    */
   router.post("/logout", async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -263,7 +300,23 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
         });
       }
 
-      tokenService.revokeRefreshToken(parsed.data.refreshToken);
+      const { refreshToken } = parsed.data;
+
+      // Verify and revoke the token
+      const result = tokenService.verifyRefreshToken(refreshToken);
+      if (result.payload) {
+        tokenService.revokeRefreshToken(refreshToken);
+        // Persist revocation to database
+        const exp = result.payload.exp ? new Date(result.payload.exp * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        await tokenRevocationRepository.revokeToken(
+          result.payload.userId,
+          result.payload.jti || "",
+          "refresh",
+          exp,
+          "logout",
+        );
+      }
+
       return res.status(200).json({
         success: true,
       });
@@ -292,31 +345,39 @@ export function createAuthRoutes(tokenService: JwtTokenService, authMiddleware?:
       }
       next();
     }),
-    (req: AuthenticatedRequest, res: Response) => {
-      if (!req.user) {
-        return res.status(401).json({
-          error: "Unauthorized",
-          code: "UNAUTHORIZED",
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        if (!req.user) {
+          return res.status(401).json({
+            error: "Unauthorized",
+            code: "UNAUTHORIZED",
+          });
+        }
+
+        const user = await userRepository.findById(req.user.userId);
+        if (!user) {
+          return res.status(404).json({
+            error: "User not found",
+            code: "USER_NOT_FOUND",
+          });
+        }
+
+        return res.status(200).json({
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          walletAddress: user.walletAddress,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        });
+      } catch (error) {
+        console.error("Get user error:", error);
+        return res.status(500).json({
+          error: "Internal server error",
+          code: "INTERNAL_ERROR",
         });
       }
-
-      const user = userStore.findById(req.user.userId);
-      if (!user) {
-        return res.status(404).json({
-          error: "User not found",
-          code: "USER_NOT_FOUND",
-        });
-      }
-
-      return res.status(200).json({
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        walletAddress: user.walletAddress,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      });
     },
   );
 
