@@ -5,6 +5,7 @@ import { metrics } from "../observability/metrics";
 import { JwtTokenService } from "../services/authService";
 import { createAuthRoutes } from "./authRoutes";
 import { createAuthMiddleware } from "./authMiddleware";
+import { createRateLimiters } from "./rateLimiter";
 import { createUsersRouter } from "../routes/users";
 import { createMatchesRouter } from "../routes/matches";
 import { createHistoryRouter } from "../routes/history";
@@ -25,6 +26,7 @@ export function createApp(env: AppEnv): CreatedApp {
   const userService = new UserService();
   const matchService = new MatchService();
   const blockchainService = new BlockchainService(env);
+  const rateLimiters = createRateLimiters();
   const corsOrigins = env.CORS_ORIGIN.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
   const corsOriginConfig =
     corsOrigins.includes("*") || corsOrigins.length === 0
@@ -68,10 +70,10 @@ export function createApp(env: AppEnv): CreatedApp {
   const matchesRoutes = createMatchesRouter(matchService);
   const historyRoutes = createHistoryRouter(matchService, env.HISTORY_SYNC_API_KEY);
 
-  app.use("/auth", authRoutes);
-  app.use("/api/auth", authRoutes);
+  app.use("/auth", rateLimiters.auth, authRoutes);
+  app.use("/api/auth", rateLimiters.auth, authRoutes);
   app.use("/api/history", historyRoutes);
-  app.use("/api/protected", authMiddleware);
+  app.use("/api/protected", rateLimiters.api, authMiddleware);
   app.use("/users", authMiddleware, usersRoutes);
   app.use("/matches", authMiddleware, matchesRoutes);
 

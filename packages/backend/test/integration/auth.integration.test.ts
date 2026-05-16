@@ -7,6 +7,38 @@ import { JwtTokenService } from "../../src/services/authService";
 import { createAuthMiddleware } from "../../src/http/authMiddleware";
 import { userStore } from "../../src/store/userStore";
 import type { AppEnv } from "../../src/config/env";
+import type { User } from "../../src/types/auth";
+
+function createInMemoryUserRepository() {
+  return {
+    async createUser(user: User): Promise<User> {
+      return userStore.createUser(user);
+    },
+    async findById(id: string): Promise<User | undefined> {
+      return userStore.findById(id);
+    },
+    async findByEmail(email: string): Promise<User | undefined> {
+      return userStore.findByEmail(email);
+    },
+    async findByUsername(username: string): Promise<User | undefined> {
+      return userStore.findByUsername(username);
+    },
+    async updateLastLogin(_userId: string): Promise<void> {},
+  };
+}
+
+function createInMemoryTokenRevocationRepository() {
+  const revoked = new Set<string>();
+
+  return {
+    async revokeToken(_userId: string, jti: string): Promise<void> {
+      revoked.add(jti);
+    },
+    async isTokenRevoked(jti: string): Promise<boolean> {
+      return revoked.has(jti);
+    },
+  };
+}
 
 describe("Auth API Routes", () => {
   let app: Express;
@@ -23,10 +55,13 @@ describe("Auth API Routes", () => {
     JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
+    DATABASE_URL: "postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public",
     PUBLIC_BASE_URL: "http://localhost:3000",
     RECONNECT_TIMEOUT_MS: 30000,
     DEDUPE_WINDOW_MS: 15000,
     ROOM_SWEEP_INTERVAL_MS: 5000,
+    OASIS_EXPECTED_CHAIN_ID: 23295,
+    BLOCKCHAIN_TX_TIMEOUT_MS: 45000,
   };
 
   beforeEach(() => {
@@ -45,7 +80,12 @@ describe("Auth API Routes", () => {
     const authMiddleware = createAuthMiddleware(tokenService);
 
     // Mount auth routes with auth middleware
-    const authRoutes = createAuthRoutes(tokenService, authMiddleware);
+    const authRoutes = createAuthRoutes(
+      tokenService,
+      createInMemoryUserRepository() as any,
+      createInMemoryTokenRevocationRepository() as any,
+      authMiddleware,
+    );
     app.use("/api/auth", authRoutes);
 
     // Mount protected route middleware for testing

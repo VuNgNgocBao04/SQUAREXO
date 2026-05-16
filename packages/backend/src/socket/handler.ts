@@ -1,6 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import type { Player } from "../types/gameCore";
 import { logger } from "../config/logger";
+import { getAuthenticatedUser } from "./authMiddleware";
 import { SocketEvents } from "../contracts/events";
 import { ContractError, ErrorCode, type ErrorPayload } from "../contracts/errors";
 import {
@@ -107,11 +108,100 @@ function assertPlayerTurn(player: Player | null, currentPlayer: Player): void {
 }
 
 function getSocketUser(socket: Socket): JwtPayload {
-  const user = (socket.data as { user?: JwtPayload }).user;
-  if (!user) {
-    throw new ContractError(ErrorCode.INTERNAL_ERROR, "Socket user context missing");
+  try {
+    return getAuthenticatedUser(socket);
+  } catch (error) {
+    throw new ContractError(
+      ErrorCode.INTERNAL_ERROR,
+      "Socket user context missing or invalid - socket must be authenticated before event handling",
+    );
   }
-  return user;
+}
+
+export async function saveMatchIfFinished(
+  options: HandlerOptions,
+  roomId: string,
+  io?: Server,
+): Promise<void> {
+  const room = options.roomManager.getRoom(roomId);
+  if (!room || room.matchSaved) {
+    return;
+  }
+
+  const allEdgesTaken = room.gameState.edges.every((edge) => !!edge.takenBy);
+  if (!allEdgesTaken) {
+    return;
+  }
+
+  const playerXId = room.players.X;
+  const playerOId = room.players.O;
+  if (!playerXId || !playerOId) {
+    return;
+  }
+
+  const totalMoves = room.gameState.edges.length;
+
+  // Set matchSaved optimistically BEFORE await to prevent race condition:
+  // Multiple handlers (MOVE, SYNC_STATE) may check matchSaved concurrently.
+  // If we only set after resolve, both could see false and attempt save.
+  // Optimistic flag ensures only first caller proceeds; others see true and return.
+  room.matchSaved = true;
+  try {
+    let txHash: string | undefined;
+    let chainResult:
+      | {
+          submitted: boolean;
+          txHash?: string;
+          winnerWallet?: string;
+          reason?: string;
+        }
+      | undefined;
+
+    try {
+      chainResult = await options.blockchainService.submitResult({
+        roomId,
+        playerXId,
+        playerOId,
+        scoreX: room.gameState.score.X,
+        scoreO: room.gameState.score.O,
+      });
+    } catch (chainError) {
+      logger.error("submit_result_onchain_failed", {
+        roomId,
+        error: chainError,
+      });
+    }
+
+    if (chainResult?.submitted) {
+      txHash = chainResult.txHash;
+    }
+
+    await options.matchService.saveResult({
+      roomId,
+      playerXId,
+      playerOId,
+      boardRows: room.boardSize.rows,
+      boardCols: room.boardSize.cols,
+      totalMoves,
+      scoreX: room.gameState.score.X,
+      scoreO: room.gameState.score.O,
+      txHash,
+      startedAt: room.matchStartedAt,
+      endedAt: new Date(),
+    });
+
+    if (chainResult?.submitted && io) {
+      io.to(roomId).emit(SocketEvents.MATCH_SETTLED, {
+        roomId,
+        txHash: chainResult.txHash,
+        winnerWallet: chainResult.winnerWallet ?? null,
+      });
+    }
+  } catch (error) {
+    // Revert flag on error so retry is possible
+    room.matchSaved = false;
+    throw error;
+  }
 }
 
 export async function saveMatchIfFinished(

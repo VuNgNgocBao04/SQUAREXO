@@ -2,25 +2,11 @@ import { createServer } from "node:http";
 import { Server as IOServer } from "socket.io";
 import type { AppEnv } from "./config/env";
 import { logger } from "./config/logger";
+import { createSocketAuthMiddleware } from "./socket/authMiddleware";
 import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
 import type { JwtPayload } from "./types/auth";
-
-function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string | string[] | undefined): string | null {
-  if (typeof rawAuthToken === "string" && rawAuthToken.length > 0) {
-    return rawAuthToken;
-  }
-
-  if (typeof authorizationHeader === "string") {
-    const [scheme, token] = authorizationHeader.split(" ");
-    if (scheme === "Bearer" && token) {
-      return token;
-    }
-  }
-
-  return null;
-}
 
 function buildGuestSocketUser(rawGuestId: unknown): JwtPayload | null {
   if (typeof rawGuestId !== "string") {
@@ -63,17 +49,21 @@ export function createBackendServer(env: AppEnv): BackendServer {
   });
 
   io.use((socket, next) => {
-    const token = extractSocketToken(socket.handshake.auth?.token, socket.handshake.headers.authorization);
+    const rawToken = socket.handshake.auth?.token;
+    const authHeader = socket.handshake.headers.authorization;
+    let token: string | null = null;
+    if (typeof rawToken === "string" && rawToken.length > 0) {
+      token = rawToken;
+    } else if (typeof authHeader === "string") {
+      const [scheme, bearerToken] = authHeader.split(" ");
+      if (scheme === "Bearer" && bearerToken) {
+        token = bearerToken;
+      }
+    }
 
     if (token) {
-      const verified = tokenService.verifyAccessToken(token);
-      if (verified.error || !verified.payload) {
-        next(new Error(verified.error ?? "INVALID_TOKEN"));
-        return;
-      }
-
-      socket.data.user = verified.payload as JwtPayload;
-      next();
+      const socketAuthMiddleware = createSocketAuthMiddleware(tokenService);
+      socketAuthMiddleware(socket, next);
       return;
     }
 
