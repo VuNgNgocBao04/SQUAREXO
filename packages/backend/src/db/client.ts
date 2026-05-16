@@ -1,5 +1,4 @@
 import { Pool, QueryResult, QueryResultRow } from "pg";
-import type { AppEnv } from "../config/env";
 import { logger } from "../config/logger";
 
 let pool: Pool | null = null;
@@ -21,18 +20,25 @@ export class DatabasePool implements DatabaseConnection {
   }
 }
 
-export function initializeDatabase(env: AppEnv): DatabasePool {
+export type DatabaseConfig = {
+  connectionString: string;
+  poolMin?: number;
+  poolMax?: number;
+  statementTimeoutMs?: number;
+};
+
+export function initializeDatabase(config: DatabaseConfig): DatabasePool {
   if (pool) {
     return new DatabasePool(pool);
   }
 
   pool = new Pool({
-    connectionString: env.DATABASE_URL,
-    max: env.DATABASE_POOL_MAX,
-    min: env.DATABASE_POOL_MIN,
+    connectionString: config.connectionString,
+    max: config.poolMax ?? 10,
+    min: config.poolMin ?? 2,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
-    statement_timeout: env.DATABASE_STATEMENT_TIMEOUT_MS,
+    statement_timeout: config.statementTimeoutMs ?? 30000,
   });
 
   pool.on("error", (err) => {

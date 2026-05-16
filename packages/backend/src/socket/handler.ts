@@ -14,12 +14,16 @@ import {
 import { metrics } from "../observability/metrics";
 import type { RoomManager } from "../room/roomManager";
 import { applyMoveFromCore, createGameFromCore } from "../services/gameCoreAdapter";
+import type { BlockchainService } from "../services/blockchainService";
 import { parsePayload } from "../utils/validation";
 import type { JwtPayload } from "../types/auth";
+import type { MatchService } from "../services/matchService";
 
-type HandlerOptions = {
+export type HandlerOptions = {
   roomManager: RoomManager;
   publicBaseUrl: string;
+  matchService: MatchService;
+  blockchainService: BlockchainService;
 };
 
 type SocketContext = {
@@ -114,6 +118,92 @@ function getSocketUser(socket: Socket): JwtPayload {
   }
 }
 
+export async function saveMatchIfFinished(
+  options: HandlerOptions,
+  roomId: string,
+  io?: Server,
+): Promise<void> {
+  const room = options.roomManager.getRoom(roomId);
+  if (!room || room.matchSaved) {
+    return;
+  }
+
+  const allEdgesTaken = room.gameState.edges.every((edge) => !!edge.takenBy);
+  if (!allEdgesTaken) {
+    return;
+  }
+
+  const playerXId = room.players.X;
+  const playerOId = room.players.O;
+  if (!playerXId || !playerOId) {
+    return;
+  }
+
+  const totalMoves = room.gameState.edges.length;
+
+  // Set matchSaved optimistically BEFORE await to prevent race condition:
+  // Multiple handlers (MOVE, SYNC_STATE) may check matchSaved concurrently.
+  // If we only set after resolve, both could see false and attempt save.
+  // Optimistic flag ensures only first caller proceeds; others see true and return.
+  room.matchSaved = true;
+  try {
+    let txHash: string | undefined;
+    let chainResult:
+      | {
+          submitted: boolean;
+          txHash?: string;
+          winnerWallet?: string;
+          reason?: string;
+        }
+      | undefined;
+
+    try {
+      chainResult = await options.blockchainService.submitResult({
+        roomId,
+        playerXId,
+        playerOId,
+        scoreX: room.gameState.score.X,
+        scoreO: room.gameState.score.O,
+      });
+    } catch (chainError) {
+      logger.error("submit_result_onchain_failed", {
+        roomId,
+        error: chainError,
+      });
+    }
+
+    if (chainResult?.submitted) {
+      txHash = chainResult.txHash;
+    }
+
+    await options.matchService.saveResult({
+      roomId,
+      playerXId,
+      playerOId,
+      boardRows: room.boardSize.rows,
+      boardCols: room.boardSize.cols,
+      totalMoves,
+      scoreX: room.gameState.score.X,
+      scoreO: room.gameState.score.O,
+      txHash,
+      startedAt: room.matchStartedAt,
+      endedAt: new Date(),
+    });
+
+    if (chainResult?.submitted && io) {
+      io.to(roomId).emit(SocketEvents.MATCH_SETTLED, {
+        roomId,
+        txHash: chainResult.txHash,
+        winnerWallet: chainResult.winnerWallet ?? null,
+      });
+    }
+  } catch (error) {
+    // Revert flag on error so retry is possible
+    room.matchSaved = false;
+    throw error;
+  }
+}
+
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
   const socketToRoom = new Map<string, string>();
 
@@ -179,6 +269,19 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         emitSnapshot(io, room.roomId, room.gameState);
         socket.to(room.roomId).emit(SocketEvents.PLAYER_JOINED, roomInfo);
 
+        // Attempt to save match if finished. Most common case: new player joining
+        // won't have game finished (returns early). Important case: player rejoining
+        // after game completed but match wasn't saved (e.g., prior save failed).
+        // This ensures eventual save without requiring additional retry logic.
+        try {
+          await saveMatchIfFinished(options, room.roomId, io);
+        } catch (error) {
+          logger.error("save_match_failed", {
+            roomId: room.roomId,
+            error,
+          });
+        }
+
         metrics.setActiveRooms(options.roomManager.getRoomsCount());
       } catch (error) {
         emitError(socket, error);
@@ -233,6 +336,14 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           options.roomManager.saveProcessedAction(room, payload.actionId, nextState, room.stateVersion);
 
           emitSnapshot(io, payload.roomId, nextState);
+          try {
+            await saveMatchIfFinished(options, payload.roomId, io);
+          } catch (error) {
+            logger.error("save_match_failed", {
+              roomId: payload.roomId,
+              error,
+            });
+          }
           metrics.observeMoveLatency(Date.now() - startedAt);
         };
 
@@ -266,6 +377,8 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
 
           room.gameState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
           room.stateVersion += 1;
+          room.matchSaved = false;
+          room.matchStartedAt = new Date();
           emitSnapshot(io, payload.roomId, room.gameState);
         };
 
@@ -276,7 +389,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
       }
     });
 
-    socket.on(SocketEvents.SYNC_STATE, (rawPayload: unknown) => {
+    socket.on(SocketEvents.SYNC_STATE, async (rawPayload: unknown) => {
       try {
         const payload = parsePayload(syncStateSchema, rawPayload);
         const room = options.roomManager.getRoom(payload.roomId);
@@ -290,6 +403,15 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           state: room.gameState,
           currentPlayer: room.gameState.currentPlayer,
         });
+
+        try {
+          await saveMatchIfFinished(options, payload.roomId, io);
+        } catch (error) {
+          logger.error("save_match_failed", {
+            roomId: payload.roomId,
+            error,
+          });
+        }
       } catch (error) {
         emitError(socket, error);
       }
@@ -299,24 +421,27 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
       try {
         const payload = parsePayload(chatMessageSchema, rawPayload);
         const room = options.roomManager.getRoom(payload.roomId);
+
         if (!room) {
           throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
             roomId: payload.roomId,
           });
         }
 
-        if (!room.socketToPlayerId.has(socket.id)) {
-          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to this room");
+        const playerId = room.socketToPlayerId.get(socket.id);
+        if (!playerId) {
+          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not in this room");
         }
 
-        const senderPlayerId = room.socketToPlayerId.get(socket.id);
-        if (!senderPlayerId) {
-          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to this room");
+        const assignedPlayer = options.roomManager.getPlayerInRoom(room, socket.id);
+        if (!assignedPlayer) {
+          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Socket is not assigned to a player in this room");
         }
 
-        io.to(payload.roomId).emit(SocketEvents.CHAT_MESSAGE_BROADCAST, {
+        io.to(payload.roomId).emit(SocketEvents.CHAT_MESSAGE, {
           roomId: payload.roomId,
-          playerId: senderPlayerId,
+          playerId,
+          player: assignedPlayer,
           message: payload.message,
           sentAt: Date.now(),
         });

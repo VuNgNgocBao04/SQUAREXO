@@ -43,6 +43,8 @@ function createInMemoryTokenRevocationRepository() {
 describe("Auth API Routes", () => {
   let app: Express;
   let tokenService: JwtTokenService;
+  let testCounter = 0;
+  const testRunId = Date.now();
 
   const mockEnv: AppEnv = {
     PORT: 3000,
@@ -53,17 +55,19 @@ describe("Auth API Routes", () => {
     JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
-    DATABASE_URL: "postgres://postgres:postgres@localhost:5432/squarexo_test",
-    DATABASE_POOL_MIN: 1,
-    DATABASE_POOL_MAX: 2,
-    DATABASE_STATEMENT_TIMEOUT_MS: 30000,
+    DATABASE_URL: "postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public",
     PUBLIC_BASE_URL: "http://localhost:3000",
     RECONNECT_TIMEOUT_MS: 30000,
     DEDUPE_WINDOW_MS: 15000,
     ROOM_SWEEP_INTERVAL_MS: 5000,
+    OASIS_EXPECTED_CHAIN_ID: 23295,
+    BLOCKCHAIN_TX_TIMEOUT_MS: 45000,
   };
 
   beforeEach(() => {
+    // Increment test counter FIRST
+    testCounter += 1;
+    
     // Clear user store before each test
     userStore.clear();
 
@@ -99,11 +103,12 @@ describe("Auth API Routes", () => {
 
   describe("POST /api/auth/register", () => {
     it("should register a new user with valid credentials", async () => {
+      const suffix = `${testRunId}_basic_${testCounter}_${randomUUID().substring(0, 8)}`;
       const res = await request(app)
         .post("/api/auth/register")
         .send({
-          username: "testuser",
-          email: "test@example.com",
+          username: `user_${suffix}`,
+          email: `${suffix}@example.com`,
           password: "password123",
         });
 
@@ -112,8 +117,8 @@ describe("Auth API Routes", () => {
       expect(res.body).toHaveProperty("refreshToken");
       expect(res.body.user).toEqual({
         id: expect.any(String),
-        username: "testuser",
-        email: "test@example.com",
+        username: `user_${suffix}`,
+        email: `${suffix}@example.com`,
         role: "user",
         walletAddress: undefined,
         createdAt: expect.any(String),
@@ -122,24 +127,51 @@ describe("Auth API Routes", () => {
     });
 
     it("should register user with optional walletAddress", async () => {
+      const suffix = `${testRunId}_wallet_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const walletAddress = `0x${suffix.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
       const res = await request(app)
         .post("/api/auth/register")
         .send({
-          username: "testuser",
-          email: "test@example.com",
+          username: `user_${suffix}`,
+          email: `${suffix}@example.com`,
           password: "password123",
-          walletAddress: "0x1234567890abcdef",
+          walletAddress,
         });
 
       expect(res.status).toBe(201);
-      expect(res.body.user.walletAddress).toBe("0x1234567890abcdef");
+      expect(res.body.user.walletAddress).toBe(walletAddress);
+    });
+
+    it("should reject duplicate walletAddress across users", async () => {
+      const suffix = `${testRunId}_dup_wallet_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const walletAddress = `0x${suffix.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}_1`,
+        email: `${suffix}_1@example.com`,
+        password: "password123",
+        walletAddress,
+      });
+
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}_2`,
+          email: `${suffix}_2@example.com`,
+          password: "password123",
+          walletAddress,
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("WALLET_IN_USE");
     });
 
     it("should reject duplicate email", async () => {
+      const suffix = `${testRunId}_dup_email_${testCounter}`;
       // First registration
       await request(app).post("/api/auth/register").send({
-        username: "testuser1",
-        email: "test@example.com",
+        username: `user_${suffix}_1`,
+        email: `${suffix}@example.com`,
         password: "password123",
       });
 
@@ -147,8 +179,8 @@ describe("Auth API Routes", () => {
       const res = await request(app)
         .post("/api/auth/register")
         .send({
-          username: "testuser2",
-          email: "test@example.com",
+          username: `user_${suffix}_2`,
+          email: `${suffix}@example.com`,
           password: "password123",
         });
 
@@ -157,10 +189,11 @@ describe("Auth API Routes", () => {
     });
 
     it("should reject duplicate username", async () => {
+      const suffix = `${testRunId}_dup_username_${testCounter}`;
       // First registration
       await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test1@example.com",
+        username: `user_${suffix}`,
+        email: `${suffix}_1@example.com`,
         password: "password123",
       });
 
@@ -168,8 +201,8 @@ describe("Auth API Routes", () => {
       const res = await request(app)
         .post("/api/auth/register")
         .send({
-          username: "testuser",
-          email: "test2@example.com",
+          username: `user_${suffix}`,
+          email: `${suffix}_2@example.com`,
           password: "password123",
         });
 
@@ -178,17 +211,18 @@ describe("Auth API Routes", () => {
     });
 
     it("should reject duplicate username with different casing", async () => {
+      const suffix = `${testRunId}_dup_case_${testCounter}_${randomUUID().substring(0, 8)}`;
       await request(app).post("/api/auth/register").send({
-        username: "TestUser",
-        email: "test1@example.com",
+        username: `User${suffix}`,
+        email: `${suffix}_1@example.com`,
         password: "password123",
       });
 
       const res = await request(app)
         .post("/api/auth/register")
         .send({
-          username: "testuser",
-          email: "test2@example.com",
+          username: `user${suffix}`,
+          email: `${suffix}_2@example.com`,
           password: "password123",
         });
 
@@ -246,9 +280,10 @@ describe("Auth API Routes", () => {
     });
 
     it("should return one success and one conflict under concurrent duplicate registration", async () => {
+      const suffix = `${testRunId}_concurrent_${testCounter}`;
       const payload = {
-        username: "race_user",
-        email: "race@example.com",
+        username: `user_${suffix}`,
+        email: `${suffix}@example.com`,
         password: "password123",
       };
 
@@ -265,18 +300,24 @@ describe("Auth API Routes", () => {
   });
 
   describe("POST /api/auth/login", () => {
+    let loginUsername: string;
+    let loginEmail: string;
+
     beforeEach(async () => {
       // Create a test user
+      const suffix = `${testRunId}_login_${testCounter}`;
+      loginUsername = `user_${suffix}`;
+      loginEmail = `${suffix}@example.com`;
       await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test@example.com",
+        username: loginUsername,
+        email: loginEmail,
         password: "password123",
       });
     });
 
     it("should login with valid credentials", async () => {
       const res = await request(app).post("/api/auth/login").send({
-        email: "test@example.com",
+        email: loginEmail,
         password: "password123",
       });
 
@@ -285,8 +326,8 @@ describe("Auth API Routes", () => {
       expect(res.body).toHaveProperty("refreshToken");
       expect(res.body.user).toEqual({
         id: expect.any(String),
-        username: "testuser",
-        email: "test@example.com",
+        username: loginUsername,
+        email: loginEmail,
         role: "user",
         walletAddress: undefined,
         createdAt: expect.any(String),
@@ -296,7 +337,7 @@ describe("Auth API Routes", () => {
 
     it("should login with case-insensitive email", async () => {
       const res = await request(app).post("/api/auth/login").send({
-        email: "TEST@EXAMPLE.COM",
+        email: loginEmail.toUpperCase(),
         password: "password123",
       });
 
@@ -306,7 +347,7 @@ describe("Auth API Routes", () => {
 
     it("should reject login with wrong password", async () => {
       const res = await request(app).post("/api/auth/login").send({
-        email: "test@example.com",
+        email: loginEmail,
         password: "wrongpassword",
       });
 
@@ -326,7 +367,7 @@ describe("Auth API Routes", () => {
 
     it("should validate required fields", async () => {
       const res = await request(app).post("/api/auth/login").send({
-        email: "test@example.com",
+        email: loginEmail,
         // missing password
       });
 
@@ -337,12 +378,15 @@ describe("Auth API Routes", () => {
 
   describe("POST /api/auth/refresh", () => {
     let refreshToken: string;
+    let refreshEmail: string;
 
     beforeEach(async () => {
       // Create a test user and get refresh token
+      const suffix = `${testRunId}_refresh_${testCounter}`;
+      refreshEmail = `${suffix}@example.com`;
       const res = await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test@example.com",
+        username: `user_${suffix}`,
+        email: refreshEmail,
         password: "password123",
       });
       refreshToken = res.body.refreshToken;
@@ -402,11 +446,14 @@ describe("Auth API Routes", () => {
 
   describe("POST /api/auth/logout", () => {
     let refreshToken: string;
+    let logoutEmail: string;
 
     beforeEach(async () => {
+      const suffix = `${testRunId}_logout_${testCounter}`;
+      logoutEmail = `${suffix}@example.com`;
       const res = await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test@example.com",
+        username: `user_${suffix}`,
+        email: logoutEmail,
         password: "password123",
       });
       refreshToken = res.body.refreshToken;
@@ -431,12 +478,17 @@ describe("Auth API Routes", () => {
 
   describe("Authentication Middleware", () => {
     let accessToken: string;
+    let middlewareUsername: string;
+    let middlewareEmail: string;
 
     beforeEach(async () => {
       // Create a test user and get access token
+      const suffix = `${testRunId}_middleware_${testCounter}`;
+      middlewareUsername = `user_${suffix}`;
+      middlewareEmail = `${suffix}@example.com`;
       const res = await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test@example.com",
+        username: middlewareUsername,
+        email: middlewareEmail,
         password: "password123",
       });
       accessToken = res.body.accessToken;
@@ -450,8 +502,8 @@ describe("Auth API Routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.user).toEqual({
         userId: expect.any(String),
-        username: "testuser",
-        email: "test@example.com",
+        username: middlewareUsername,
+        email: middlewareEmail,
         role: "user",
         walletAddress: undefined,
       });
@@ -486,12 +538,17 @@ describe("Auth API Routes", () => {
   describe("GET /api/auth/me - protected route with middleware", () => {
     let accessToken: string;
     let userId: string;
+    let meUsername: string;
+    let meEmail: string;
 
     beforeEach(async () => {
       // Create a test user and get access token
+      const suffix = `${testRunId}_me_${testCounter}`;
+      meUsername = `user_${suffix}`;
+      meEmail = `${suffix}@example.com`;
       const res = await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test@example.com",
+        username: meUsername,
+        email: meEmail,
         password: "password123",
       });
       accessToken = res.body.accessToken;
@@ -506,8 +563,8 @@ describe("Auth API Routes", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
         id: userId,
-        username: "testuser",
-        email: "test@example.com",
+        username: meUsername,
+        email: meEmail,
         role: "user",
         walletAddress: undefined,
         createdAt: expect.any(String),
@@ -532,14 +589,75 @@ describe("Auth API Routes", () => {
     });
   });
 
+  describe("PUT /api/auth/wallet", () => {
+    let accessToken: string;
+    let otherAccessToken: string;
+
+    beforeEach(async () => {
+      const primarySuffix = `${testRunId}_wallet_link_${testCounter}`;
+      const secondarySuffix = `${testRunId}_wallet_conflict_${testCounter}`;
+
+      const primary = await request(app).post("/api/auth/register").send({
+        username: `user_${primarySuffix}`,
+        email: `${primarySuffix}@example.com`,
+        password: "password123",
+      });
+
+      const secondary = await request(app).post("/api/auth/register").send({
+        username: `user_${secondarySuffix}`,
+        email: `${secondarySuffix}@example.com`,
+        password: "password123",
+      });
+
+      accessToken = primary.body.accessToken;
+      otherAccessToken = secondary.body.accessToken;
+    });
+
+    it("should link a wallet to the authenticated account", async () => {
+      const walletAddress = `0x${`${testRunId}${testCounter}wallet`.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      const res = await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .send({ walletAddress });
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.walletAddress).toBe(walletAddress);
+    });
+
+    it("should reject linking a wallet that is already linked to another user", async () => {
+      const walletAddress = `0x${`${testRunId}${testCounter}linked`.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${otherAccessToken}`)
+        .send({ walletAddress })
+        .expect(200);
+
+      const res = await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .send({ walletAddress });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("WALLET_IN_USE");
+    });
+  });
+
   describe("Token type validation - Critical Security Tests", () => {
     let accessToken: string;
     let refreshToken: string;
+    let tokenUsername: string;
+    let tokenEmail: string;
+
     beforeEach(async () => {
       // Register user to get tokens
+      const suffix = `${testRunId}_token_${testCounter}`;
+      tokenUsername = `user_${suffix}`;
+      tokenEmail = `${suffix}@example.com`;
       const res = await request(app).post("/api/auth/register").send({
-        username: "testuser",
-        email: "test@example.com",
+        username: tokenUsername,
+        email: tokenEmail,
         password: "password123",
       });
       accessToken = res.body.accessToken;

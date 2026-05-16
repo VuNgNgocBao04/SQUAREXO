@@ -14,14 +14,13 @@ describe("http integration", () => {
     JWT_AUDIENCE: "squarexo-test-clients",
     JWT_EXPIRES_IN: "7d",
     REFRESH_TOKEN_EXPIRES_IN: "30d",
-    DATABASE_URL: "postgres://postgres:postgres@localhost:5432/squarexo_test",
-    DATABASE_POOL_MIN: 1,
-    DATABASE_POOL_MAX: 2,
-    DATABASE_STATEMENT_TIMEOUT_MS: 30000,
+    DATABASE_URL: "postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public",
     PUBLIC_BASE_URL: "http://localhost:0",
     RECONNECT_TIMEOUT_MS: 15000,
     DEDUPE_WINDOW_MS: 10000,
     ROOM_SWEEP_INTERVAL_MS: 1000,
+    OASIS_EXPECTED_CHAIN_ID: 23295,
+    BLOCKCHAIN_TX_TIMEOUT_MS: 45000,
   };
 
   let server: ReturnType<typeof createBackendServer>;

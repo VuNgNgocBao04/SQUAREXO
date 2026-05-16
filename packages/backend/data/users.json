@@ -1,0 +1,34 @@
+{
+  "users": [
+    {
+      "id": "4e2904d0-138d-49b9-b42f-005726b8fe60",
+      "username": "demo_user_01",
+      "email": "demo_user_01@example.com",
+      "passwordHash": "$2b$10$YWZF5DVvwOB43H1hSJ.fCOMRkugw2DlYP/0H3iyfGzgGAf20.H0.C",
+      "role": "user",
+      "walletAddress": null,
+      "createdAt": "2026-04-17T05:33:15.297Z",
+      "updatedAt": "2026-04-17T05:33:15.297Z"
+    },
+    {
+      "id": "7ec84464-bd4f-4d60-bf6f-0da2e1bedd0f",
+      "username": "Demo_A",
+      "email": "DemoA@gmail.com",
+      "passwordHash": "$2b$10$BiryoKT54E1FSSk32jhxZ.dOtJAfqeUyEQkaNJlXOt9S6U6nZA7s6",
+      "role": "user",
+      "walletAddress": null,
+      "createdAt": "2026-04-17T06:04:26.694Z",
+      "updatedAt": "2026-04-17T06:04:26.694Z"
+    },
+    {
+      "id": "a0964cb0-5fdf-4c4a-bc16-d83e91bc8e84",
+      "username": "Demo_B",
+      "email": "DemoB@gmail.com",
+      "passwordHash": "$2b$10$xzQzsGBhU0Ipr/lIAQDlkOHt85KtKyYQ5k.UeikOv6VbfFZPI7mJe",
+      "role": "user",
+      "walletAddress": "0xb11b0c1960cf25c3dd83ec1ed14fcb692f54f2ee",
+      "createdAt": "2026-04-17T06:06:36.573Z",
+      "updatedAt": "2026-04-17T06:09:28.554Z"
+    }
+  ]
+}

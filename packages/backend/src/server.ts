@@ -2,28 +2,11 @@ import { createServer } from "node:http";
 import { Server as IOServer } from "socket.io";
 import type { AppEnv } from "./config/env";
 import { logger } from "./config/logger";
-import { initializeDatabase, closeDatabase, type DatabaseConnection } from "./db/client";
 import { createSocketAuthMiddleware } from "./socket/authMiddleware";
 import { registerSocketHandlers } from "./socket/handler";
 import { createApp } from "./http/createApp";
 import { RoomManager } from "./room/roomManager";
 import type { JwtPayload } from "./types/auth";
-import type { JwtTokenService } from "./services/authService";
-
-function extractSocketToken(rawAuthToken: unknown, authorizationHeader: string | string[] | undefined): string | null {
-  if (typeof rawAuthToken === "string" && rawAuthToken.length > 0) {
-    return rawAuthToken;
-  }
-
-  if (typeof authorizationHeader === "string") {
-    const [scheme, token] = authorizationHeader.split(" ");
-    if (scheme === "Bearer" && token) {
-      return token;
-    }
-  }
-
-  return null;
-}
 
 function buildGuestSocketUser(rawGuestId: unknown): JwtPayload | null {
   if (typeof rawGuestId !== "string") {
@@ -55,8 +38,8 @@ export type BackendServer = {
   close: () => Promise<void>;
 };
 
-export function createBackendServer(env: AppEnv, db: DatabaseConnection): BackendServer {
-  const app = createApp(env, db);
+export function createBackendServer(env: AppEnv): BackendServer {
+  const { app, tokenService, matchService, blockchainService } = createApp(env);
   const httpServer = createServer(app);
   const io = new IOServer(httpServer, {
     cors: {
@@ -65,13 +48,34 @@ export function createBackendServer(env: AppEnv, db: DatabaseConnection): Backen
     },
   });
 
-  const tokenService = (app as { tokenService?: JwtTokenService }).tokenService;
-  if (!tokenService) {
-    throw new Error("Token service is not available for socket authentication");
-  }
+  io.use((socket, next) => {
+    const rawToken = socket.handshake.auth?.token;
+    const authHeader = socket.handshake.headers.authorization;
+    let token: string | null = null;
+    if (typeof rawToken === "string" && rawToken.length > 0) {
+      token = rawToken;
+    } else if (typeof authHeader === "string") {
+      const [scheme, bearerToken] = authHeader.split(" ");
+      if (scheme === "Bearer" && bearerToken) {
+        token = bearerToken;
+      }
+    }
 
-  // Use enhanced socket authentication middleware
-  io.use(createSocketAuthMiddleware(tokenService));
+    if (token) {
+      const socketAuthMiddleware = createSocketAuthMiddleware(tokenService);
+      socketAuthMiddleware(socket, next);
+      return;
+    }
+
+    const guestUser = buildGuestSocketUser(socket.handshake.auth?.playerId);
+    if (!guestUser) {
+      next(new Error("MISSING_TOKEN"));
+      return;
+    }
+
+    socket.data.user = guestUser;
+    next();
+  });
 
   const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);
   const roomSweepTimer = setInterval(() => {
@@ -82,6 +86,8 @@ export function createBackendServer(env: AppEnv, db: DatabaseConnection): Backen
   registerSocketHandlers(io, {
     roomManager,
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${env.PORT}`,
+    matchService,
+    blockchainService,
   });
 
   let closed = false;
@@ -93,7 +99,6 @@ export function createBackendServer(env: AppEnv, db: DatabaseConnection): Backen
     closed = true;
     clearInterval(roomSweepTimer);
     await io.close();
-    await closeDatabase();
     await new Promise<void>((resolve, reject) => {
       httpServer.close((error) => {
         if (error && error.message !== "Server is not running.") {
@@ -113,10 +118,7 @@ export function createBackendServer(env: AppEnv, db: DatabaseConnection): Backen
 }
 
 export async function startBackendServer(env: AppEnv): Promise<BackendServer> {
-  // Initialize database
-  const db = initializeDatabase(env);
-
-  const server = createBackendServer(env, db);
+  const server = createBackendServer(env);
 
   await new Promise<void>((resolve) => {
     server.httpServer.listen(env.PORT, () => {
