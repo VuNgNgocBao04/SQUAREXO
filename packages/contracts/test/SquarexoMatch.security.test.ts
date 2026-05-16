@@ -2,6 +2,20 @@ import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 
+async function expectCustomError(promise: Promise<unknown>, customErrorName: string) {
+  try {
+    await promise;
+    throw new Error(`Expected transaction to revert with ${customErrorName}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    expect(message).to.include(customErrorName);
+  }
+}
+
+async function expectSuccess(promise: Promise<unknown>) {
+  await promise;
+}
+
 async function deployMatchFixture() {
   const [admin, backendSigner, creator, opponent, outsider] = await ethers.getSigners();
 
@@ -16,11 +30,12 @@ describe("SquarexoMatch security", () => {
   it("rejects empty room id", async () => {
     const { contract, creator } = await loadFixture(deployMatchFixture);
 
-    await expect(
+    await expectCustomError(
       contract.connect(creator).createMatch("", ethers.parseEther("0.1"), {
         value: ethers.parseEther("0.1"),
       }),
-    ).to.be.revertedWithCustomError(contract, "InvalidRoomId");
+      "InvalidRoomId",
+    );
   });
 
   it("prevents creator joining their own match", async () => {
@@ -29,8 +44,8 @@ describe("SquarexoMatch security", () => {
 
     await contract.connect(creator).createMatch("ROOM_1", bet, { value: bet });
 
-    await expect(contract.connect(creator).joinMatch("ROOM_1", { value: bet })).to.be.revertedWithCustomError(
-      contract,
+    await expectCustomError(
+      contract.connect(creator).joinMatch("ROOM_1", { value: bet }),
       "Unauthorized",
     );
   });
@@ -42,9 +57,10 @@ describe("SquarexoMatch security", () => {
     await contract.connect(creator).createMatch("ROOM_2", bet, { value: bet });
     await contract.connect(opponent).joinMatch("ROOM_2", { value: bet });
 
-    await expect(
+    await expectCustomError(
       contract.connect(outsider).submitResult("ROOM_2", creator.address),
-    ).to.be.revertedWithCustomError(contract, "AccessControlUnauthorizedAccount");
+      "AccessControlUnauthorizedAccount",
+    );
   });
 
   it("blocks result submission after deadline and allows force draw timeout", async () => {
@@ -56,11 +72,12 @@ describe("SquarexoMatch security", () => {
 
     await time.increase(181);
 
-    await expect(
+    await expectCustomError(
       contract.connect(backendSigner).submitResult("ROOM_3", creator.address),
-    ).to.be.revertedWithCustomError(contract, "InvalidMatchState");
+      "InvalidMatchState",
+    );
 
-    await expect(contract.connect(creator).forceDrawOnTimeout("ROOM_3")).to.not.be.reverted;
+    await expectSuccess(contract.connect(creator).forceDrawOnTimeout("ROOM_3"));
   });
 
   it("lets winner claim once", async () => {
@@ -71,9 +88,9 @@ describe("SquarexoMatch security", () => {
     await contract.connect(opponent).joinMatch("ROOM_4", { value: bet });
     await contract.connect(backendSigner).submitResult("ROOM_4", creator.address);
 
-    await expect(contract.connect(creator).claimReward("ROOM_4")).to.not.be.reverted;
-    await expect(contract.connect(creator).claimReward("ROOM_4")).to.be.revertedWithCustomError(
-      contract,
+    await expectSuccess(contract.connect(creator).claimReward("ROOM_4"));
+    await expectCustomError(
+      contract.connect(creator).claimReward("ROOM_4"),
       "InvalidMatchState",
     );
   });

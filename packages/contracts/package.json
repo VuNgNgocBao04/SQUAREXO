@@ -7,7 +7,11 @@
     "clean": "hardhat clean",
     "test": "hardhat test",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network sapphireTestnet",
-    "deploy:mainnet": "hardhat run scripts/deploy.ts --network sapphireMainnet"
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network sapphireMainnet",
+    "verify": "hardhat verify",
+    "deploy:verify:testnet": "hardhat run scripts/deploy.ts --network sapphireTestnet && echo \"After deploy: run 'pnpm --filter contracts -- run verify -- --network sapphireTestnet <CONTRACT_ADDRESS> <CONSTRUCTOR_ARGS>'\"",
+    "audit:prepare": "mkdir -p flattened || true && hardhat flatten contracts/SquarexoMatch.sol > flattened/SquarexoMatch.sol",
+    "check:repro": "node ./scripts/check_repro.js || echo 'Create scripts/check_repro.js to implement exact bytecode checks'"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
