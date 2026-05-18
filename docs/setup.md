@@ -3,7 +3,7 @@
 ## 1) Prerequisites
 
 - Node.js 22
-- pnpm (qua corepack)
+- pnpm (thông qua corepack)
 - Docker + Docker Compose
 
 ## 2) Clone và cài package

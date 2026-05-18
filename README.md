@@ -158,7 +158,7 @@ pnpm dev
 | `REFRESH_TOKEN_EXPIRES_IN` | TTL refresh token |
 | `OASIS_RPC_URL` | RPC chính cho backend blockchain submit |
 | `OASIS_RPC_FALLBACK_URLS` | RPC fallback (comma-separated) |
-| `OASIS_EXPECTED_CHAIN_ID` | Chain ID kỳ vọng (testnet: 23295) |
+| `OASIS_EXPECTED_CHAIN_ID` | Chain ID mong đợi (testnet: 23295) |
 | `BACKEND_SIGNER_PRIVATE_KEY` | Private key signer backend (server only) |
 | `CONTRACT_ADDRESS` | Address `SquarexoMatch` |
 | `BLOCKCHAIN_TX_TIMEOUT_MS` | Timeout chờ tx confirm |

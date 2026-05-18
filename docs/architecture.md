@@ -35,7 +35,7 @@ Nguồn chính nằm trong `packages/frontend/src/App.tsx`.
 
 ### Trạng thái
 - Chủ yếu dùng `useState/useRef/useCallback` trong một component lớn.
-- Có file `store/gameStore.ts` dùng Zustand nhưng hiện chưa được App chính import.
+- Có file `store/gameStore.ts` dùng Zustand nhưng hiện chưa được import vào App chính.
 
 ### Auth
 - Login/register gọi backend qua `src/services/auth.ts`.
