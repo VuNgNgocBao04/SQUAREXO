@@ -115,46 +115,53 @@ export function createAuthRouter(
 
     const { password } = parsed.data;
     const identifier = parsed.data.identifier ?? parsed.data.email ?? "";
-    const user = await userService.findByIdentifier(identifier);
+    try {
+      const user = await userService.findByIdentifier(identifier);
 
-    if (!user) {
-      return res.status(401).json({
-        error: "Invalid username/email or password",
-        code: "INVALID_CREDENTIALS",
-      });
-    }
+      if (!user) {
+        return res.status(401).json({
+          error: "Invalid username/email or password",
+          code: "INVALID_CREDENTIALS",
+        });
+      }
 
-    const validPassword = await bcrypt.compare(password, user.passwordHash);
-    if (!validPassword) {
-      return res.status(401).json({
-        error: "Invalid username/email or password",
-        code: "INVALID_CREDENTIALS",
-      });
-    }
+      const validPassword = await bcrypt.compare(password, user.passwordHash);
+      if (!validPassword) {
+        return res.status(401).json({
+          error: "Invalid username/email or password",
+          code: "INVALID_CREDENTIALS",
+        });
+      }
 
-    const accessToken = tokenService.signAccessToken({
-      userId: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      walletAddress: user.walletAddress,
-    });
-
-    const refreshToken = tokenService.signRefreshToken(user.id);
-
-    return res.status(200).json({
-      accessToken,
-      refreshToken,
-      user: {
-        id: user.id,
+      const accessToken = tokenService.signAccessToken({
+        userId: user.id,
         username: user.username,
         email: user.email,
         role: user.role,
         walletAddress: user.walletAddress,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      },
-    });
+      });
+
+      const refreshToken = tokenService.signRefreshToken(user.id);
+
+      return res.status(200).json({
+        accessToken,
+        refreshToken,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          walletAddress: user.walletAddress,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (_error) {
+      return res.status(500).json({
+        error: "Internal server error",
+        code: "INTERNAL_ERROR",
+      });
+    }
   });
 
   router.post("/refresh", async (req: AuthenticatedRequest, res: Response) => {

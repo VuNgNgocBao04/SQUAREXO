@@ -4,9 +4,11 @@
   "description": "SQUAREXO backend server",
   "main": "dist/index.js",
   "scripts": {
+    "predev": "pnpm prisma:push",
     "dev": "tsx watch src/index.ts",
     "prebuild": "pnpm --filter game-core build",
     "build": "tsc -p tsconfig.build.json",
+    "prestart": "pnpm prisma:push",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
