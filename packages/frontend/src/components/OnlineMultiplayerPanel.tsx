@@ -128,25 +128,25 @@ function saveJoinedFlag(joined: boolean): void {
 function mapErrorMessage(code?: ErrorCode | string): string {
   switch (code) {
     case ErrorCodes.VALIDATION_ERROR:
-      return 'Payload không hợp lệ.'
+      return 'Invalid payload.'
     case ErrorCodes.ROOM_NOT_FOUND:
-      return 'Không tìm thấy phòng.'
+      return 'Room not found.'
     case ErrorCodes.ROOM_FULL:
-      return 'Phòng đã đủ 2 người.'
+      return 'The room is already full.'
     case ErrorCodes.NOT_IN_ROOM:
-      return 'Bạn chưa ở trong phòng này.'
+      return 'You are not in this room.'
     case ErrorCodes.NOT_YOUR_TURN:
-      return 'Chưa tới lượt của bạn.'
+      return 'It is not your turn yet.'
     case ErrorCodes.INVALID_MOVE:
-      return 'Nước đi không hợp lệ.'
+      return 'Invalid move.'
     case ErrorCodes.EDGE_ALREADY_TAKEN:
-      return 'Cạnh này đã được chọn.'
+      return 'That edge is already taken.'
     case ErrorCodes.RESET_FORBIDDEN:
-      return 'Chỉ người trong phòng mới được reset.'
+      return 'Only room participants can reset the board.'
     case ErrorCodes.INTERNAL_ERROR:
-      return 'Lỗi hệ thống phía server.'
+      return 'Server internal error.'
     default:
-      return 'Lỗi không xác định từ backend.'
+      return 'Unknown backend error.'
   }
 }
 
@@ -191,7 +191,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
   const [roomFull, setRoomFull] = useState(false)
   const [boardState, setBoardState] = useState<GameState | null>(null)
   const [currentTurn, setCurrentTurn] = useState<Player>('X')
-  const [statusText, setStatusText] = useState('Đang kết nối backend...')
+  const [statusText, setStatusText] = useState('Connecting to backend...')
   const [errorText, setErrorText] = useState('')
 
   const socketRef = useRef<Socket | null>(null)
@@ -206,9 +206,9 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
   const autoHealAttemptedRef = useRef(false)
 
   const connectedLabel = useMemo(() => {
-    if (connectionState === 'online') return 'Đã kết nối'
-    if (connectionState === 'connecting') return 'Đang kết nối'
-    if (connectionState === 'reconnecting') return 'Đang reconnect'
+    if (connectionState === 'online') return 'Connected'
+    if (connectionState === 'connecting') return 'Connecting'
+    if (connectionState === 'reconnecting') return 'Reconnecting'
     return 'Offline'
   }, [connectionState])
 
@@ -264,7 +264,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     clearConnectTimeout()
     connectTimeoutRef.current = window.setTimeout(() => {
       if (!waitingJoinRef.current) return
-      exitToHome('Kết nối phòng quá lâu. Hệ thống đã quay về màn hình chính.')
+      exitToHome('Room connection took too long. The system returned to the home screen.')
     }, CONNECT_TIMEOUT_MS)
   }, [clearConnectTimeout, exitToHome])
 
@@ -272,12 +272,12 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     if (socketRef.current) return socketRef.current
 
     setConnectionState('connecting')
-    setStatusText('Đang kết nối backend...')
+    setStatusText('Connecting to backend...')
 
     const accessToken = getAccessToken()
     if (!accessToken) {
-      setErrorText('Chưa đăng nhập. Vui lòng đăng nhập trước.')
-      exitToHome('Chưa đăng nhập')
+      setErrorText('Not logged in. Please sign in first.')
+      exitToHome('Not logged in')
       return
     }
 
@@ -295,7 +295,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
 
     socket.on('connect', () => {
       setConnectionState('online')
-      setStatusText('Kết nối backend thành công.')
+        setStatusText('Connected to backend successfully.')
 
       const pending = pendingJoinRef.current
       const roomToJoin = pending?.roomId || (shouldRejoinRef.current ? activeRoomRef.current || roomId : '')
@@ -314,12 +314,12 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
 
     socket.on('disconnect', () => {
       setConnectionState('offline')
-      setStatusText('Mất kết nối, đang chờ reconnect...')
+      setStatusText('Disconnected, waiting to reconnect...')
     })
 
     socket.on('reconnect_attempt', () => {
       setConnectionState('reconnecting')
-      setStatusText('Đang thử reconnect...')
+      setStatusText('Trying to reconnect...')
     })
 
     socket.on(SocketEvents.ROOM_INFO, (payload: RoomInfoPayload) => {
@@ -331,10 +331,10 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       setStage(payload.isFull ? 'game' : 'waiting')
       setStatusText(
         payload.isFull
-          ? `Phòng đã đủ 2 người. Bạn là ${payload.assignedPlayer ?? 'spectator'}.`
+          ? `The room is full. You are ${payload.assignedPlayer ?? 'spectator'}.`
           : payload.assignedPlayer
-            ? `Bạn đang là ${payload.assignedPlayer}. Đang chờ người thứ 2 vào phòng.`
-            : 'Đã vào phòng, chờ đối thủ.',
+            ? `You are ${payload.assignedPlayer}. Waiting for the second player to join.`
+            : 'Joined the room, waiting for the opponent.',
       )
       setErrorText('')
       persistIdentity(payload.roomId, true)
@@ -346,9 +346,9 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       setRoomFull(payload.isFull)
       if (payload.isFull) {
         setStage('game')
-        setStatusText('Đủ 2 người. Ván đấu bắt đầu.')
+        setStatusText('Two players are present. The match has started.')
       } else {
-        setStatusText('Đối thủ đã vào phòng.')
+        setStatusText('The opponent has joined the room.')
       }
     })
 
@@ -359,7 +359,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       if (roomFull || payload.state.currentPlayer) {
         setStage((prev) => (prev === 'setup' ? 'waiting' : 'game'))
       }
-      setStatusText('Board đã được đồng bộ từ server.')
+      setStatusText('Board synchronized from the server.')
       setErrorText('')
     })
 
@@ -370,7 +370,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       setAssignedPlayer(null)
       setBoardState(null)
       setStage('setup')
-      setStatusText('Phòng trống và đã được dọn.')
+      setStatusText('The room is empty and has been cleaned up.')
       saveJoinedFlag(false)
       activeRoomRef.current = ''
     })
@@ -383,7 +383,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
         pendingJoinRef.current = { roomId: retryRoomId, playerId: nextPlayerId }
         shouldRejoinRef.current = true
         setErrorText('')
-        setStatusText('Phát hiện trùng Player ID, đang tự động tạo ID mới và thử lại...')
+        setStatusText('Duplicate Player ID detected, generating a new ID and retrying...')
         startConnectTimeout()
 
         if (socketRef.current?.connected) {
@@ -402,7 +402,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       setErrorText(`[${payload.code}] ${payload.message}`)
       setStatusText(mapErrorMessage(payload.code))
       if (payload.code === ErrorCodes.ROOM_NOT_FOUND) {
-        exitToHome('Không tìm thấy phòng. Hệ thống đã quay về màn hình chính.')
+        exitToHome('Room not found. The system returned to the home screen.')
       }
     })
 
@@ -431,7 +431,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       setConnectionState(socket.connected ? 'online' : 'connecting')
       setStage('waiting')
       setErrorText('')
-      setStatusText(mode === 'create' ? 'Đang tạo phòng...' : 'Đang vào phòng...')
+      setStatusText(mode === 'create' ? 'Creating room...' : 'Joining room...')
       persistIdentity(nextRoomId, true)
       pendingJoinRef.current = { roomId: nextRoomId, playerId: playerIdRef.current }
       shouldRejoinRef.current = true
@@ -461,7 +461,7 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
       const socket = socketRef.current
       if (!socket || !boardState || stage !== 'game' || !activeRoomRef.current) return
       if (assignedPlayer && currentTurn && assignedPlayer !== currentTurn) {
-        setStatusText('Chưa tới lượt của bạn.')
+        setStatusText('It is not your turn yet.')
         return
       }
       if (isEdgeTaken(boardState, edge)) return
@@ -612,8 +612,8 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
     <section className="backend-demo-card online-room-card">
       {stage === 'setup' && (
         <>
-          <div className="backend-demo-title">Online 2 Người</div>
-          <div className="backend-demo-subtitle">Nhập mã phòng, sau đó tạo hoặc vào phòng. ID người chơi tự động tạo.</div>
+          <div className="backend-demo-title">Online 2-Player Mode</div>
+          <div className="backend-demo-subtitle">Enter a room code, then create or join a room. Player IDs are generated automatically.</div>
 
           <div className="backend-grid">
             <label className="backend-field">
@@ -640,22 +640,22 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
 
       {stage === 'waiting' && (
         <>
-          <div className="backend-demo-title">Phòng chờ</div>
-          <div className="backend-demo-subtitle">Đang chờ người chơi thứ 2 vào phòng...</div>
+          <div className="backend-demo-title">Waiting Room</div>
+          <div className="backend-demo-subtitle">Waiting for the second player to join...</div>
 
           <div className="room-code-box room-code-box--wide">
-            <div className="code-label">Mã phòng</div>
+            <div className="code-label">Room ID</div>
             <div className="code-val">{roomId}</div>
-            <div className="code-hint">Chia sẻ Room ID này cho người chơi còn lại</div>
+            <div className="code-hint">Share this Room ID with the other player</div>
             <div className="players-row">
               <div className="player-slot">
                 <div className="slot-avatar p1">X</div>
-                <div className="slot-name">{playerX || 'Bạn'}</div>
+                <div className="slot-name">{playerX || 'You'}</div>
               </div>
               <div className="vs-sep">VS</div>
               <div className="player-slot">
                 <div className={`slot-avatar ${roomFull ? 'p2' : 'empty'}`}>{roomFull ? 'O' : '?'}</div>
-                <div className="slot-name">{playerO || 'Đang chờ...'}</div>
+                <div className="slot-name">{playerO || 'Waiting...'}</div>
               </div>
             </div>
           </div>
@@ -672,20 +672,20 @@ export default function OnlineMultiplayerPanel({ onExitToHome }: OnlineMultiplay
         <>
           <div className="scoreboard scoreboard--wide">
             <div className={`p-card ${currentTurn === 'X' ? 'active' : ''}`}>
-              <div className="p-name">NGƯỜI CHƠI <span className="player-color player-p1">X</span></div>
+              <div className="p-name">PLAYER <span className="player-color player-p1">X</span></div>
               <div className="p-score score-p1">{boardState?.score.X ?? 0}</div>
               <div className="p-boxes">{boardState?.score.X ?? 0} ô</div>
             </div>
             <div className="vs">VS</div>
             <div className={`p-card p2 ${currentTurn === 'O' ? 'active' : ''}`}>
-              <div className="p-name">NGƯỜI CHƠI <span className="player-color player-p2">O</span></div>
+              <div className="p-name">PLAYER <span className="player-color player-p2">O</span></div>
               <div className="p-score score-p2">{boardState?.score.O ?? 0}</div>
               <div className="p-boxes">{boardState?.score.O ?? 0} ô</div>
             </div>
           </div>
 
           <div className="turn-pill turn-pill--spaced">
-            Lượt: <span className={currentTurn === 'X' ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>{currentTurn}</span>
+            Turn: <span className={currentTurn === 'X' ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>{currentTurn}</span>
           </div>
 
           <div className="board-wrap board-wrap--full">

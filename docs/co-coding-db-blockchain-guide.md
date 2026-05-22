@@ -1,67 +1,67 @@
 # SQUAREXO Co-Coding Guide: Database + Blockchain (Oasis Sapphire)
 
-## 1. Mục tiêu guide
-- Đồng bộ cách chạy local/staging cho team co-coding.
-- Tránh lỗi phổ biến: sai port DB, sai chain, sai private key format, tx pending lâu.
-- Đảm bảo quy trình predeploy ổn định trước khi lên Oasis Mainnet.
+## 1. Guide Goals
+- Keep local and staging workflows consistent for the co-coding team.
+- Avoid common mistakes such as the wrong DB port, wrong chain, invalid private key format, or long-pending transactions.
+- Keep the pre-deploy process stable before moving to Oasis Mainnet.
 
-## 2. Chuẩn bị môi trường
-- Node.js: 20+ hoặc 22 LTS.
-- pnpm: theo workspace lockfile.
-- Docker Desktop: bật Linux containers.
-- Ví test: MetaMask.
-- Faucet test ROSE: dùng cho Sapphire Testnet.
+## 2. Environment Setup
+- Node.js: 20+ or 22 LTS.
+- pnpm: use the workspace lockfile.
+- Docker Desktop: enable Linux containers.
+- Test wallet: MetaMask.
+- Test ROSE faucet: for Sapphire Testnet.
 
-Cài dependencies từ root:
+Install dependencies from the repository root:
 ```bash
 pnpm install
 ```
 
-## 3. Database với Docker (PostgreSQL)
+## 3. Database with Docker (PostgreSQL)
 
-### 3.1 Khởi động DB
-Từ root repository:
+### 3.1 Start the DB
+From the repository root:
 ```bash
 docker compose up -d postgres
 docker compose ps
 ```
 
-Kỳ vọng:
+Expected:
 - Container `squarexo-postgres` ở trạng thái `healthy`.
 - Host port mapping: `55432 -> 5432`.
 
-### 3.2 Biến môi trường backend
+### 3.2 Backend environment variables
 Trong `packages/backend/.env`:
 ```env
 DATABASE_URL=postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public
 ```
 
-### 3.3 Đồng bộ schema Prisma
+### 3.3 Sync the Prisma schema
 ```bash
 cd packages/backend
 pnpm prisma:generate
 pnpm prisma:push
 ```
 
-Nếu dùng migration files (khi team đã tạo thư mục `prisma/migrations`):
+If you use migration files (when the team has created the `prisma/migrations` directory):
 ```bash
 pnpm prisma:migrate:deploy
 ```
 
-### 3.4 Kiểm tra nhanh DB kết nối
+### 3.4 Quick DB connectivity check
 ```bash
 pnpm build
 ```
-Nếu muốn reset DB local:
+If you want to reset the local DB:
 ```bash
 docker compose down -v
 docker compose up -d postgres
 cd packages/backend && pnpm prisma:push
 ```
 
-## 4. Oasis Sapphire integration (Backend)
+## 4. Oasis Sapphire Integration (Backend)
 
-### 4.1 Biến môi trường quan trọng
+### 4.1 Important environment variables
 Trong `packages/backend/.env`:
 ```env
 OASIS_RPC_URL=https://testnet.sapphire.oasis.io
@@ -73,12 +73,12 @@ BLOCKCHAIN_TX_TIMEOUT_MS=45000
 HISTORY_SYNC_API_KEY=<min_24_chars_optional>
 ```
 
-Lưu ý security:
-- Không commit private key lên git.
-- Key phải dùng secret manager ở CI/CD.
-- Nên tách deployer key và backend signer key.
+Security notes:
+- Do not commit private keys to git.
+- Store keys in a CI/CD secret manager.
+- Keep the deployer key and backend signer key separate.
 
-### 4.2 Cơ chế failover + an toàn đã có
+### 4.2 Existing failover and safety mechanisms
 - RPC fallback: thử nhiều endpoint.
 - Chain guard: reject nếu chainId không đúng.
 - Tx timeout guard: fail-fast nếu chờ xác nhận quá lâu.
@@ -86,7 +86,7 @@ Lưu ý security:
 
 ## 5. Frontend + MetaMask (Sapphire Testnet/Mainnet)
 
-### 5.1 Cấu hình env frontend
+### 5.1 Frontend env configuration
 Trong `packages/frontend/.env`:
 ```env
 VITE_BACKEND_URL=http://localhost:3000
@@ -96,14 +96,14 @@ VITE_OASIS_RPC_FALLBACK_URLS=https://sapphire-testnet.gateway.tenderly.co,https:
 VITE_CONTRACT_ADDRESS=0x<deployed_contract_address>
 ```
 
-### 5.2 Hành vi ví
+### 5.2 Wallet behavior
 - App tự `wallet_switchEthereumChain`.
-- Nếu chưa có network, app tự `wallet_addEthereumChain`.
+- If the network is missing, the app automatically calls `wallet_addEthereumChain`.
 - Theo dõi `accountsChanged` và `chainChanged` để refresh state.
 
-## 6. Deploy contract lên Oasis
+## 6. Deploy the contract to Oasis
 
-### 6.1 Chuẩn bị env contracts
+### 6.1 Prepare the contracts env file
 Trong `packages/contracts/.env`:
 ```env
 OASIS_RPC_URL=https://testnet.sapphire.oasis.io
@@ -114,7 +114,7 @@ MATCH_JOIN_TIMEOUT_SECONDS=900
 MATCH_RESULT_TIMEOUT_SECONDS=3600
 ```
 
-### 6.2 Build + test
+### 6.2 Build and test
 ```bash
 cd packages/contracts
 pnpm build
@@ -131,32 +131,32 @@ Mainnet:
 pnpm deploy:mainnet
 ```
 
-Sau deploy:
-- Ghi lại contract address.
-- Cập nhật `CONTRACT_ADDRESS` backend + `VITE_CONTRACT_ADDRESS` frontend.
-- Kiểm tra submit result end-to-end từ backend.
+After deployment:
+- Record the contract address.
+- Update `CONTRACT_ADDRESS` in the backend and `VITE_CONTRACT_ADDRESS` in the frontend.
+- Verify end-to-end result submission from the backend.
 
-## 7. Runbook troubleshoot nhanh
+## 7. Quick troubleshooting runbook
 
-### 7.1 Prisma lỗi `P1001 Can't reach database`
+### 7.1 Prisma error `P1001 Can't reach database`
 Checklist:
 1. `docker compose ps` có healthy không.
 2. `DATABASE_URL` có đúng `localhost:55432` không.
 3. Port 55432 có bị process khác chiếm không.
 
-### 7.2 MetaMask báo sai network
+### 7.2 MetaMask reports the wrong network
 Checklist:
 1. `VITE_OASIS_NETWORK` đúng (`testnet` hoặc `mainnet`).
 2. RPC URL hợp lệ.
 3. ChainId đúng: testnet `0x5aff`, mainnet `0x5afe`.
 
-### 7.3 Tx pending lâu hoặc fail
+### 7.3 Transactions pending too long or failing
 Checklist:
 1. ROSE balance signer đủ không.
 2. RPC chính có nghẽn không, fallback có hoạt động không.
 3. Kiểm tra log backend với sự kiện `blockchain_submit_result_slow` và `blockchain_submit_result_failed`.
 
-## 8. Checklist predeploy trước mainnet
+## 8. Pre-deploy checklist before mainnet
 - Backend build pass.
 - Frontend build pass.
 - Contract tests pass.
@@ -165,10 +165,10 @@ Checklist:
 - Secrets nằm ở CI vault, không ở source control.
 - Có alert cho tx pending > 30s.
 
-## 9. Quy trình team co-coding đề xuất
-1. Pull latest branch làm việc.
+## 9. Suggested team co-coding process
+1. Pull the latest working branch.
 2. `pnpm install`.
 3. `docker compose up -d postgres`.
 4. `cd packages/backend && pnpm prisma:push`.
-5. Chạy build/test từng package.
-6. Chỉ merge khi pass toàn bộ checks.
+5. Run build and test commands for each package.
+6. Merge only after all checks pass.

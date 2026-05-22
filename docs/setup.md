@@ -1,12 +1,12 @@
-# Setup local
+# Local Setup
 
 ## 1) Prerequisites
 
 - Node.js 22
-- pnpm (thông qua corepack)
-- Docker + Docker Compose
+- pnpm (through corepack)
+- Docker and Docker Compose
 
-## 2) Clone và cài package
+## 2) Clone and Install Packages
 
 ```bash
 git clone https://github.com/VuNgNgocBao04/SQUAREXO.git
@@ -15,18 +15,18 @@ corepack enable
 pnpm install --fix-lockfile
 ```
 
-> Ghi chú: lockfile hiện có thể không chạy được với `--frozen-lockfile` do trạng thái file trong repo.
+> Note: the lockfile may not work with `--frozen-lockfile` because of the current repository state.
 
-## 3) Khởi động PostgreSQL
+## 3) Start PostgreSQL
 
 ```bash
 docker compose up -d postgres
 docker compose ps
 ```
 
-Postgres local map: `localhost:55432 -> container:5432`.
+Local Postgres mapping: `localhost:55432 -> container:5432`.
 
-## 4) Cấu hình env
+## 4) Configure Env Files
 
 ### Backend
 
@@ -34,9 +34,9 @@ Postgres local map: `localhost:55432 -> container:5432`.
 cp packages/backend/.env.example packages/backend/.env
 ```
 
-Bắt buộc tối thiểu:
-- `JWT_SECRET` (>= 32 ký tự)
-- `DATABASE_URL` đúng port `55432`
+Minimum required values:
+- `JWT_SECRET` (at least 32 characters)
+- `DATABASE_URL` pointing to port `55432`
 
 ### Frontend
 
@@ -50,22 +50,22 @@ cp packages/frontend/.env.example packages/frontend/.env
 cp packages/contracts/.env.example packages/contracts/.env
 ```
 
-## 5) Init Prisma
+## 5) Initialize Prisma
 
 ```bash
 pnpm --filter backend prisma:generate
 pnpm --filter backend prisma:push
 ```
 
-## 6) Chạy dev
+## 6) Run Development
 
-### Cách 1: chạy toàn workspace
+### Option 1: Run the full workspace
 
 ```bash
 pnpm dev
 ```
 
-### Cách 2: tách terminal
+### Option 2: Split into two terminals
 
 Terminal 1:
 ```bash
@@ -77,7 +77,7 @@ Terminal 2:
 pnpm --filter frontend dev
 ```
 
-## 7) Build/Test tham khảo
+## 7) Reference Build/Test Commands
 
 ```bash
 pnpm --filter game-core test
@@ -87,9 +87,9 @@ pnpm --filter frontend build
 pnpm --filter contracts test
 ```
 
-Hiện tại có một số lỗi nền đã biết (chi tiết ở README `Known Issues`).
+There are currently some known baseline issues (see README `Known Issues`).
 
-## 8) Deploy contract testnet (tuỳ chọn)
+## 8) Optional Testnet Contract Deploy
 
 ```bash
 pnpm --filter contracts build
@@ -97,11 +97,11 @@ pnpm --filter contracts test
 pnpm --filter contracts deploy:testnet
 ```
 
-Sau deploy, cập nhật:
+After deployment, update:
 - `packages/backend/.env` -> `CONTRACT_ADDRESS`, `BACKEND_SIGNER_PRIVATE_KEY`
 - `packages/frontend/.env` -> `VITE_CONTRACT_ADDRESS`
 
-## 9) Kiểm tra nhanh backend
+## 9) Quick Backend Checks
 
 ```bash
 curl http://localhost:3000/health
