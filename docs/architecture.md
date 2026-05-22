@@ -1,19 +1,19 @@
 # Architecture
 
-## 1) Tổng quan
+## 1) Overview
 
-SQUAREXO được tổ chức theo monorepo pnpm workspace với 4 package chính:
+SQUAREXO is organized as a pnpm monorepo workspace with four main packages:
 
-- `frontend`: React app + UI gameplay
-- `backend`: HTTP API + Socket.IO + persistence
-- `game-core`: engine Dots & Boxes dùng chung
-- `contracts`: Solidity contract cho stake/settlement
+- `frontend`: React app and gameplay UI
+- `backend`: HTTP API, Socket.IO, and persistence
+- `game-core`: shared Dots & Boxes engine
+- `contracts`: Solidity contract for staking and settlement
 
-Thiết kế hiện tại là hybrid:
-- local mode: frontend tự chạy game loop
-- online mode: backend giữ state authoritative theo room
+The current design is hybrid:
+- local mode: the frontend runs the game loop itself
+- online mode: the backend keeps authoritative room state
 
-## 2) Sơ đồ runtime
+## 2) Runtime Diagram
 
 ```text
 Browser (React)
@@ -29,30 +29,30 @@ Express + Socket.IO (backend)
 PostgreSQL (Prisma)      Oasis Sapphire (SquarexoMatch)
 ```
 
-## 3) Frontend details
+## 3) Frontend Details
 
-Nguồn chính nằm trong `packages/frontend/src/App.tsx`.
+The primary entry point is `packages/frontend/src/App.tsx`.
 
-### Trạng thái
-- Chủ yếu dùng `useState/useRef/useCallback` trong một component lớn.
-- Có file `store/gameStore.ts` dùng Zustand nhưng hiện chưa được import vào App chính.
+### State
+- The app primarily uses `useState`, `useRef`, and `useCallback` inside a large component.
+- There is a `store/gameStore.ts` file that uses Zustand, but it is not currently imported into the main app.
 
 ### Auth
-- Login/register gọi backend qua `src/services/auth.ts`.
-- Token và user profile lưu localStorage.
+- Login and registration call the backend through `src/services/auth.ts`.
+- Tokens and user profile data are stored in `localStorage`.
 
-### Ví + blockchain call
-- Khi chơi online có stake, frontend gọi trực tiếp contract:
+### Wallet and Blockchain Calls
+- When online play uses stakes, the frontend calls the contract directly:
   - create room -> `createMatch`
   - join room -> `joinMatch`
   - claim -> `claimReward`
-- Nếu thiếu `VITE_CONTRACT_ADDRESS`, frontend fallback sang chế độ realtime off-chain.
+- If `VITE_CONTRACT_ADDRESS` is missing, the frontend falls back to off-chain realtime mode.
 
 ### Realtime
-- Kết nối `socket.io-client` tới `VITE_BACKEND_URL`.
-- Event nhận: `room_info`, `player_joined`, `game_state`, `chat_message`, `match_settled`.
+- Connects `socket.io-client` to `VITE_BACKEND_URL`.
+- Incoming events: `room_info`, `player_joined`, `game_state`, `chat_message`, and `match_settled`.
 
-## 4) Backend details
+## 4) Backend Details
 
 ### HTTP
 - `createApp()` mount routes:
@@ -62,48 +62,48 @@ Nguồn chính nằm trong `packages/frontend/src/App.tsx`.
   - protected: `/users`, `/matches`
 
 ### Auth
-- `JwtTokenService` quản lý access/refresh token.
-- Password hash dùng bcrypt.
-- Wallet link qua `/api/auth/wallet`.
+- `JwtTokenService` manages access and refresh tokens.
+- Password hashing uses bcrypt.
+- Wallet linking happens through `/api/auth/wallet`.
 
 ### Realtime engine
-- `registerSocketHandlers()` xử lý room/join/move/chat/sync.
-- `RoomManager` giữ mapping socket-player, pending reconnect, và dedupe action.
-- Khi game kết thúc: backend save match + cố gắng submit kết quả on-chain.
+- `registerSocketHandlers()` handles room, join, move, chat, and sync events.
+- `RoomManager` keeps socket-player mappings, pending reconnects, and action deduplication.
+- When a game ends, the backend saves the match and attempts to submit the result on-chain.
 
 ### Persistence
-- Prisma dùng khi có `DATABASE_URL`.
-- Nếu không có DB, nhiều service fallback in-memory để chạy tối thiểu.
+- Prisma is used when `DATABASE_URL` is available.
+- If there is no DB, many services fall back to in-memory mode for minimal operation.
 
-## 5) Blockchain contract
+## 5) Blockchain Contract
 
-`SquarexoMatch.sol` quản lý vòng đời match có cược:
+`SquarexoMatch.sol` manages the lifecycle of wagered matches:
 - `createMatch`
 - `joinMatch`
 - `submitResult` (chỉ backend signer role)
 - `claimReward`
 - timeout paths (`cancelUnjoinedMatch`, `forceDrawOnTimeout`)
 
-Backend chỉ submit kết quả, không claim thay user.
+The backend only submits results; it does not claim rewards on behalf of users.
 
-## 6) Data model (Prisma)
+## 6) Data Model (Prisma)
 
 - `User`: account, wallet, elo
-- `Match`: metadata trận, winner, tx hash
-- `MatchMove`: chi tiết move theo thứ tự
+- `Match`: match metadata, winner, tx hash
+- `MatchMove`: ordered move details
 
-ELO update được xử lý khi `saveResult`.
+ELO updates are handled when `saveResult` runs.
 
-## 7) CI/CD hiện có
+## 7) Existing CI/CD
 
-Workflow `.github/workflows/oasis.yml` gồm:
+The `.github/workflows/oasis.yml` workflow includes:
 - install dependencies
 - build backend/frontend
 - compile + test contracts
 - job deploy testnet thủ công (`workflow_dispatch`)
 
-## 8) Điểm cần lưu ý kỹ thuật
+## 8) Technical Notes
 
-1. Hiện có duplicate function `saveMatchIfFinished` trong `socket/handler.ts` (ảnh hưởng build/test).  
-2. Frontend có 2 file `GameCanvas.tsx` và `gameCanvas.tsx` trùng casing.  
-3. Contract compile cần tải solc từ `binaries.soliditylang.org`; môi trường bị chặn mạng sẽ fail.
+1. There is currently a duplicate `saveMatchIfFinished` function in `socket/handler.ts` that affects build and test.
+2. The frontend contains two files, `GameCanvas.tsx` and `gameCanvas.tsx`, that only differ by casing.
+3. Contract compilation requires downloading solc from `binaries.soliditylang.org`; network-restricted environments will fail.

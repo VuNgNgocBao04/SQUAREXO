@@ -305,18 +305,18 @@ function App() {
   const [onlineAssignedPlayer, setOnlineAssignedPlayer] = useState<OnlinePlayer | null>(null)
   const [isOnlineMatch, setIsOnlineMatch] = useState(false)
   const [roomChat, setRoomChat] = useState<RoomMessage[]>([
-    { id: 1, user: 'System', msg: 'Phòng chờ đã được tạo. Chia sẻ mã phòng để đối thủ tham gia.' },
+    { id: 1, user: 'System', msg: 'The waiting room has been created. Share the room code so the opponent can join.' },
   ])
   const [chatMsg, setChatMsg] = useState('')
 
   const [walletConnected, setWalletConnected] = useState(false)
-  const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
+  const [walletAddress, setWalletAddress] = useState('Not connected')
   const [, setWalletAccount] = useState<string | null>(null)
   const [walletBalance, setWalletBalance] = useState('0.0000')
   const [walletPending, setWalletPending] = useState(false)
   const [chainStatus, setChainStatus] = useState<'idle' | 'staking' | 'playing' | 'settling' | 'settled'>('idle')
   const [contractConfigured, setContractConfigured] = useState(false)
-  const [contractCheckMessage, setContractCheckMessage] = useState('Đang kiểm tra smart contract...')
+  const [contractCheckMessage, setContractCheckMessage] = useState('Checking smart contract...')
   const [rematchPending, setRematchPending] = useState(false)
 
   const [currentPlayer, setCurrentPlayer] = useState(1)
@@ -343,8 +343,8 @@ function App() {
   const [modalState, setModalState] = useState({
     open: false,
     icon: '🏆',
-    title: 'X THẮNG!',
-    sub: 'Kết quả đang được ghi lên blockchain...',
+    title: 'X WINS!',
+    sub: 'The result is being written to the blockchain...',
     tx: 'Tx: 0x...',
   })
 
@@ -622,7 +622,7 @@ function App() {
       const rows = payload.state.rows
       const cols = payload.state.cols
       if (rows !== cols) {
-        showToast('Phiên bản giao diện hiện hỗ trợ bàn cờ vuông.')
+        showToast('This UI version currently supports square boards only.')
       }
 
       const effectiveSize = rows
@@ -697,7 +697,7 @@ function App() {
 
     const token = getAccessToken()
     if (!token) {
-      throw new Error('Chưa đăng nhập, không thể kết nối realtime')
+      throw new Error('You must be logged in to connect to realtime')
     }
 
     const socket = io(BACKEND_URL, {
@@ -716,7 +716,7 @@ function App() {
       setOnlineConnected(false)
       setOnlineAssignedPlayer(null)
       if (isOnlineMatch) {
-        showToast('Mất kết nối realtime. Vui lòng vào lại phòng.')
+        showToast('Realtime connection lost. Please rejoin the room.')
       }
     })
 
@@ -792,7 +792,7 @@ function App() {
       setChainStatus('settled')
       setModalState((prev) => ({
         ...prev,
-        sub: 'Kết quả đã được backend ghi lên Oasis Sapphire thành công.',
+        sub: 'The backend successfully wrote the result to Oasis Sapphire.',
         tx: payload.txHash ? `Tx: ${payload.txHash}` : 'Tx: Đã ghi nhận on-chain',
       }))
 
@@ -810,10 +810,10 @@ function App() {
       setChainStatus('settling')
       setModalState((prev) => ({
         ...prev,
-        sub: 'Backend chưa thể xác nhận giao dịch testnet. Vui lòng thử lại sau ít giây.',
-        tx: payload.reason ? `Lý do: ${payload.reason}` : 'Đang chờ retry settlement...',
+        sub: 'The backend could not confirm the testnet transaction yet. Please try again in a few seconds.',
+        tx: payload.reason ? `Reason: ${payload.reason}` : 'Waiting to retry settlement...',
       }))
-      showToast('Settlement on-chain chưa thành công, hệ thống đang giữ kết quả để retry')
+      showToast('On-chain settlement failed; the system is keeping the result for a retry')
     })
 
     socket.on('room_cleaned', () => {
@@ -824,7 +824,7 @@ function App() {
       setJoinCode('')
       setRoomCodeSafe('')
       setScreen('home')
-      showToast('Phòng đã đóng. Quay về màn hình chính.')
+      showToast('The room was closed. Returning to the home screen.')
     })
 
     socket.on('rematch_prompt', (payload: RematchPromptPayload) => {
@@ -834,7 +834,7 @@ function App() {
       }
 
       if (payload.target === 'opponent') {
-        const accept = window.confirm('Đối thủ muốn đấu lại. Bạn có đồng ý không?')
+        const accept = window.confirm('The opponent wants a rematch. Do you agree?')
         const response: RematchResponsePayload = {
           roomId: payload.roomId,
           accept,
@@ -842,7 +842,7 @@ function App() {
         socket.emit('rematch_response', response)
       } else {
         setRematchPending(true)
-        showToast('Đã gửi yêu cầu đấu lại. Đang chờ đối thủ phản hồi...')
+        showToast('Rematch request sent. Waiting for the opponent to respond...')
       }
     })
 
@@ -856,7 +856,7 @@ function App() {
       setModalState((prev) => ({ ...prev, open: false }))
       setChainStatus('playing')
       endModalShownRef.current = false
-      showToast('Đối thủ đã đồng ý. Bắt đầu ván đấu mới!')
+      showToast('The opponent accepted. Starting a new match!')
     })
 
     socket.on('rematch_declined', (payload: RematchResultPayload) => {
@@ -867,7 +867,7 @@ function App() {
 
       setRematchPending(false)
       setModalState((prev) => ({ ...prev, open: false }))
-      showToast('Đối thủ không đồng ý đấu lại. Trận đấu kết thúc cho cả hai.')
+      showToast('The opponent declined the rematch. The match is over for both players.')
     })
 
     socketRef.current = socket
@@ -1180,18 +1180,18 @@ function App() {
     let winner = 0
     let icon = '🤝'
     let title = 'HÒA!'
-    let sub = 'Cả hai đều xuất sắc! Đang ghi kết quả lên blockchain...'
+    let sub = 'Both players played well! Writing the result to the blockchain...'
 
     if (p1 > p2) {
       winner = 1
       icon = '🏆'
-      title = 'X THẮNG!'
-      sub = `Tỉ số ${p1} - ${p2}. Đang ghi kết quả lên blockchain...`
+      title = 'X WINS!'
+      sub = `Score ${p1} - ${p2}. Writing the result to the blockchain...`
     } else if (p2 > p1) {
       winner = 2
       icon = gameModeRef.current === 'ai' ? '🤖' : '🏆'
-      title = `${gameModeRef.current === 'ai' ? 'AI (O)' : 'O'} THẮNG!`
-      sub = `Tỉ số ${p2} - ${p1}. Đang ghi kết quả lên blockchain...`
+      title = `${gameModeRef.current === 'ai' ? 'AI (O)' : 'O'} WINS!`
+      sub = `Score ${p2} - ${p1}. Writing the result to the blockchain...`
     }
 
     if (winner === 1 || winner === 0) {
@@ -1205,9 +1205,9 @@ function App() {
       icon,
       title,
       sub: isOnlineMatch
-        ? 'Backend signer đang ghi kết quả on-chain lên Oasis Sapphire...'
+        ? 'The backend signer is writing the result on-chain to Oasis Sapphire...'
         : sub,
-      tx: isOnlineMatch ? 'Tx: Chờ backend xác nhận...' : 'Tx: Đang xử lý...',
+      tx: isOnlineMatch ? 'Tx: Waiting for backend confirmation...' : 'Tx: Processing...',
     })
 
     if (isOnlineMatch) {
@@ -1219,7 +1219,7 @@ function App() {
       const tx = genTxHash()
       setModalState((prev) => ({
         ...prev,
-        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ROSE đã được chuyển.` : ''}`,
+        sub: `The result was written on-chain successfully! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ROSE has been transferred.` : ''}`,
         tx: `Tx: ${tx}`,
       }))
 
@@ -1317,7 +1317,7 @@ function App() {
   }, [aiMove, gameMode, gridSize, setCurrentPlayerSafe, setScoresSafe, setTotalMovesSafe, startBlockTicker])
 
   const goHome = useCallback(() => {
-    if (gameActiveRef.current && !window.confirm('Bạn có chắc muốn thoát ván chơi?')) {
+    if (gameActiveRef.current && !window.confirm('Are you sure you want to exit the match?')) {
       return
     }
     gameActiveRef.current = false
@@ -1358,7 +1358,7 @@ function App() {
   const checkContractConfiguration = useCallback(async () => {
     if (!CONTRACT_ADDRESS) {
       setContractConfigured(false)
-      setContractCheckMessage('Smart contract chưa được cấu hình')
+      setContractCheckMessage('Smart contract is not configured')
       return false
     }
 
@@ -1367,23 +1367,23 @@ function App() {
       const code = await provider.getCode(CONTRACT_ADDRESS)
       if (!code || code === '0x') {
         setContractConfigured(false)
-        setContractCheckMessage('Không tìm thấy contract trên Oasis Sapphire')
+        setContractCheckMessage('Contract not found on Oasis Sapphire')
         return false
       }
 
       setContractConfigured(true)
-      setContractCheckMessage('Smart contract sẵn sàng trên Oasis Sapphire')
+      setContractCheckMessage('Smart contract is ready on Oasis Sapphire')
       return true
     } catch {
       setContractConfigured(false)
-      setContractCheckMessage('Không thể xác minh contract từ RPC')
+      setContractCheckMessage('Unable to verify the contract via RPC')
       return false
     }
   }, [])
 
   const withContractSigner = useCallback(async () => {
     if (!window.ethereum) {
-      throw new Error('Không có provider ví trong trình duyệt')
+      throw new Error('No wallet provider found in the browser')
     }
     if (!contractConfigured) {
       throw new Error(contractCheckMessage)
@@ -1412,7 +1412,7 @@ function App() {
     async (targetRoomId: string, mode: 'create' | 'join') => {
       const amount = stakeEthRef.current
       if (amount <= 0) {
-        throw new Error('Stake phải lớn hơn 0')
+        throw new Error('Stake must be greater than 0')
       }
 
       if (!contractConfigured) {
@@ -1441,9 +1441,9 @@ function App() {
       const tx = await contract.claimReward(roomCodeRef.current)
       await tx.wait()
       await refreshWalletBalance()
-      showToast(`Claim reward thành công: ${String(tx.hash).slice(0, 10)}...`)
+      showToast(`Claim reward succeeded: ${String(tx.hash).slice(0, 10)}...`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Claim reward thất bại'
+      const message = error instanceof Error ? error.message : 'Claim reward failed'
       showToast(message)
     }
   }, [refreshWalletBalance, showToast, withContractSigner])
@@ -1455,16 +1455,16 @@ function App() {
         return
       }
       if (!walletConnected) {
-        showToast('Hãy kết nối ví trước khi tạo phòng cược')
+        showToast('Please connect your wallet before creating a bet room')
         return
       }
 
       const code = genRoomCode()
       try {
         const txHash = await lockStakeOnChain(code, 'create')
-        showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
+        showToast(`Stake succeeded: ${txHash.slice(0, 10)}...`)
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Không stake được khi tạo phòng'
+        const message = error instanceof Error ? error.message : 'Unable to stake while creating the room'
         showToast(message)
         setChainStatus('idle')
         return
@@ -1474,7 +1474,7 @@ function App() {
       setRematchPending(false)
       updateRoomPlayers(1)
       setRoomChat([
-        { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
+        { id: 1, user: 'System', msg: `Room ${code} has been created. Share the code so the opponent can join.` },
       ])
       setRoomCountdown(null)
       setGameMode('pvp')
@@ -1489,11 +1489,11 @@ function App() {
   const joinRoom = useCallback(() => {
     const run = async () => {
       if (!joinCode.trim()) {
-        showToast('Nhập mã phòng!')
+        showToast('Enter a room code!')
         return
       }
       if (!walletConnected) {
-        showToast('Hãy kết nối ví trước khi vào phòng cược')
+        showToast('Please connect your wallet before joining a bet room')
         return
       }
 
@@ -1505,9 +1505,9 @@ function App() {
       const code = joinCode.trim().toUpperCase()
       try {
         const txHash = await lockStakeOnChain(code, 'join')
-        showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
+        showToast(`Stake completed while joining the room: ${txHash.slice(0, 10)}...`)
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Không stake được khi vào phòng'
+        const message = error instanceof Error ? error.message : 'Unable to stake while joining the room'
         showToast(message)
         setChainStatus('idle')
         return
@@ -1517,8 +1517,8 @@ function App() {
       setRematchPending(false)
       updateRoomPlayers(1)
       setRoomChat([
-        { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
-        { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
+        { id: 1, user: 'System', msg: `Joined room ${code}.` },
+        { id: 2, user: 'System', msg: 'Syncing with the server...' },
       ])
       setJoinCode('')
       setGameMode('pvp')
@@ -1749,17 +1749,17 @@ function App() {
       if (isOnlineMatch) {
         const socket = socketRef.current
         if (!socket || !onlineConnected) {
-          showToast('Mất kết nối server realtime')
+          showToast('Realtime server connection lost')
           return
         }
         if (!onlineAssignedPlayer) {
-          showToast('Bạn đang là spectator, chưa có quyền đánh')
+          showToast('You are a spectator and cannot make moves yet')
           return
         }
 
         const expectedTurn = onlineAssignedPlayer === 'X' ? 1 : 2
         if (currentPlayerRef.current !== expectedTurn) {
-          showToast('Chưa tới lượt của bạn')
+          showToast('It is not your turn yet')
           return
         }
 
@@ -1808,7 +1808,7 @@ function App() {
 
   const handleLogin = useCallback(() => {
     if (!loginForm.username || !loginForm.password) {
-      setAuthError('Vui lòng nhập đầy đủ thông tin')
+      setAuthError('Please fill in all required fields')
       return
     }
     setAuthError('')
@@ -1829,11 +1829,11 @@ function App() {
         setLoginForm({ username: '', password: '' })
         setScreen('home')
         setAuthLoading(false)
-        showToast('Đăng nhập thành công!')
+        showToast('Logged in successfully!')
       })
       .catch((error: unknown) => {
         setAuthLoading(false)
-        setAuthError(error instanceof Error ? error.message : 'Đăng nhập thất bại')
+        setAuthError(error instanceof Error ? error.message : 'Login failed')
       })
     return
 
@@ -1851,21 +1851,21 @@ function App() {
       setLoginForm({ username: '', password: '' })
       setScreen('home')
       setAuthLoading(false)
-      showToast('Đăng nhập thành công!')
+      showToast('Logged in successfully!')
     }, 800)
   }, [loginForm, showToast])
 
   const handleRegister = useCallback(() => {
     if (!registerForm.username || !registerForm.email || !registerForm.password || !registerForm.confirm) {
-      setAuthError('Vui lòng nhập đầy đủ thông tin')
+      setAuthError('Please fill in all required fields')
       return
     }
     if (registerForm.password !== registerForm.confirm) {
-      setAuthError('Mật khẩu không trùng khớp')
+      setAuthError('Passwords do not match')
       return
     }
     if (registerForm.password.length < 6) {
-      setAuthError('Mật khẩu phải có ít nhất 6 ký tự')
+      setAuthError('Password must be at least 6 characters')
       return
     }
     setAuthError('')
@@ -1885,11 +1885,11 @@ function App() {
         setRegisterForm({ username: '', email: '', password: '', confirm: '' })
         setScreen('home')
         setAuthLoading(false)
-        showToast('Đăng ký thành công!')
+        showToast('Registered successfully!')
       })
       .catch((error: unknown) => {
         setAuthLoading(false)
-        setAuthError(error instanceof Error ? error.message : 'Đăng ký thất bại')
+        setAuthError(error instanceof Error ? error.message : 'Registration failed')
       })
     return
 
@@ -1907,7 +1907,7 @@ function App() {
       setRegisterForm({ username: '', email: '', password: '', confirm: '' })
       setScreen('home')
       setAuthLoading(false)
-      showToast('Đăng ký thành công!')
+      showToast('Registered successfully!')
     }, 800)
   }, [registerForm, showToast])
 
@@ -1916,7 +1916,7 @@ function App() {
     setAuthUser(null)
     setWalletConnected(false)
     setWalletAccount(null)
-    setWalletAddress('ChÆ°a káº¿t ná»‘i')
+    setWalletAddress('Not connected')
     setWalletBalance('0.0000')
     localStorage.removeItem('dbAuthUser')
     setScreen('auth')
@@ -1924,7 +1924,7 @@ function App() {
     setLoginForm({ username: '', password: '' })
     setRegisterForm({ username: '', email: '', password: '', confirm: '' })
     setAuthError('')
-    showToast('Đã đăng xuất')
+    showToast('Logged out')
   }, [showToast])
 
   useEffect(() => {
@@ -1985,12 +1985,12 @@ function App() {
           <div className="nav-logo">D&amp;B // CHAIN</div>
           <div className="nav-links">
             <button className="btn-ghost" onClick={toggleTheme}>
-              {themeMode === 'dark' ? '☀ Sáng' : '🌙 Tối'}
+              {themeMode === 'dark' ? '☀ Light' : '🌙 Dark'}
             </button>
-            <button className="btn-ghost" onClick={openProfile}>Hồ Sơ</button>
-            <button className="btn-ghost" onClick={openSettings}>Cài đặt</button>
+            <button className="btn-ghost" onClick={openProfile}>Profile</button>
+            <button className="btn-ghost" onClick={openSettings}>Settings</button>
             <button className="btn-ghost" onClick={goHome}>Home</button>
-            <button className="btn-ghost" onClick={showHistory}>Lịch Sử</button>
+            <button className="btn-ghost" onClick={showHistory}>History</button>
           </div>
         </nav>
       )}
@@ -2009,20 +2009,20 @@ function App() {
                   className={`auth-tab ${authTab === 'login' ? 'active' : ''}`}
                   onClick={() => { setAuthTab('login'); setAuthError('') }}
                 >
-                  ĐĂNG NHẬP
+                  LOG IN
                 </button>
                 <button
                   className={`auth-tab ${authTab === 'register' ? 'active' : ''}`}
                   onClick={() => { setAuthTab('register'); setAuthError('') }}
                 >
-                  ĐĂNG KÝ
+                  SIGN UP
                 </button>
               </div>
 
               {authTab === 'login' && (
                 <div className="auth-form">
                   <div className="form-group">
-                    <label>TÊN NGƯỜI DÙNG</label>
+                    <label>USERNAME</label>
                     <input
                       type="text"
                       placeholder="username"
@@ -2032,7 +2032,7 @@ function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label>MẬT KHẨU</label>
+                    <label>PASSWORD</label>
                     <input
                       type="password"
                       placeholder="••••••••"
@@ -2048,7 +2048,7 @@ function App() {
                     onClick={handleLogin}
                     disabled={authLoading}
                   >
-                    {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG NHẬP'}
+                    {authLoading ? '⏳ Processing...' : '⚡ LOG IN'}
                   </button>
                   <div className="auth-demo">
                     Demo: <span className="demo-link">demo / demo123</span>
@@ -2059,7 +2059,7 @@ function App() {
               {authTab === 'register' && (
                 <div className="auth-form">
                   <div className="form-group">
-                    <label>TÊN NGƯỜI DÙNG</label>
+                    <label>USERNAME</label>
                     <input
                       type="text"
                       placeholder="username"
@@ -2079,7 +2079,7 @@ function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label>MẬT KHẨU</label>
+                    <label>PASSWORD</label>
                     <input
                       type="password"
                       placeholder="••••••••"
@@ -2089,7 +2089,7 @@ function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label>XÁC NHÂN MẬT KHẨU</label>
+                    <label>CONFIRM PASSWORD</label>
                     <input
                       type="password"
                       placeholder="••••••••"
@@ -2105,7 +2105,7 @@ function App() {
                     onClick={handleRegister}
                     disabled={authLoading}
                   >
-                    {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG KÝ'}
+                    {authLoading ? '⏳ Processing...' : '⚡ SIGN UP'}
                   </button>
                 </div>
               )}
@@ -2122,8 +2122,8 @@ function App() {
                   <div className="user-name">{authUser?.username}</div>
                   <div className="user-email">{authUser?.email}</div>
                 </div>
-                <button className="btn-profile" onClick={openProfile}>Hồ Sơ</button>
-                <button className="btn-logout" onClick={handleLogout} title="Đăng xuất">
+                <button className="btn-profile" onClick={openProfile}>Profile</button>
+                <button className="btn-logout" onClick={handleLogout} title="Log out">
                   🚪
                 </button>
               </div>
@@ -2134,7 +2134,7 @@ function App() {
             </div>
 
             <div className="wallet-card">
-              <div className="wallet-label">⬡ Ví Blockchain</div>
+              <div className="wallet-label">⬡ Blockchain Wallet</div>
               <div className="wallet-status">
                 <div className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
                 <div className="wallet-addr">{walletAddress}</div>
@@ -2143,21 +2143,21 @@ function App() {
                   onClick={connectWallet}
                   disabled={walletConnected || walletPending}
                 >
-                  {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
+                  {walletConnected ? '✓ Connected' : walletPending ? 'Connecting...' : 'Connect'}
                 </button>
               </div>
               {walletConnected && (
                 <div className="wallet-balance">
-                  Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
+                  Balance: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                 </div>
               )}
             </div>
 
             <div className="config-card">
-              <div className="config-title">⬡ Cấu Hình Ván Chơi</div>
+              <div className="config-title">⬡ Game Configuration</div>
 
               <div className="row">
-                <label>Kích Thước Bảng</label>
+                <label>Board Size</label>
                 <div className="size-btns">
                   {[3, 4, 5, 6].map((size) => (
                     <button
@@ -2189,10 +2189,10 @@ function App() {
               </div>
 
               <div className="row">
-                <label>Chế Độ Chơi</label>
+                <label>Game Mode</label>
                 <div className="mode-btns">
                   <button className={`md-btn ${gameMode === 'pvp' ? 'on' : ''}`} onClick={() => setGameMode('pvp')}>
-                    👥 PvP Local
+                    👥 Local PvP
                   </button>
                   <button className={`md-btn ${gameMode === 'ai' ? 'on' : ''}`} onClick={() => setGameMode('ai')}>
                     🤖 vs AI
@@ -2201,11 +2201,11 @@ function App() {
               </div>
             </div>
 
-            <button className="btn-primary" onClick={startGame}>⚡ BẮT ĐẦU VÁN CHƠI</button>
+            <button className="btn-primary" onClick={startGame}>⚡ START MATCH</button>
 
             <div className="room-btns">
-              <button className="room-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
-              <button className="btn-ghost home-history-btn" onClick={showHistory}>📋 Lịch Sử</button>
+              <button className="room-btn" onClick={() => setScreen('room')}>🚪 Create / Join Room</button>
+              <button className="btn-ghost home-history-btn" onClick={showHistory}>📋 History</button>
               <button className="btn-ghost" onClick={openSettings}>⚙</button>
             </div>
           </section>
@@ -2215,18 +2215,18 @@ function App() {
           <section className="screen settings-screen">
             <div className="settings-modal">
               <div className="settings-header">
-                <div className="settings-title">⚙ CÀI ĐẶT</div>
-                <button className="btn-ghost settings-close" onClick={closeSettings}>✕ Đóng</button>
+                <div className="settings-title">⚙ SETTINGS</div>
+                <button className="btn-ghost settings-close" onClick={closeSettings}>✕ Close</button>
               </div>
 
               <div className="settings-section">
-                <div className="settings-label">Giao Diện</div>
+                <div className="settings-label">Interface</div>
                 <div className="settings-item-row">
-                  <span>Chế độ tối</span>
+                  <span>Dark mode</span>
                   <button
                     className={`theme-switch ${themeMode === 'dark' ? 'on' : ''}`}
                     onClick={toggleTheme}
-                    aria-label="Bật tắt chế độ tối"
+                    aria-label="Toggle dark mode"
                   >
                     <span className="theme-switch-dot" />
                   </button>
@@ -2234,8 +2234,8 @@ function App() {
               </div>
 
               <div className="settings-section">
-                <div className="settings-label">Kích Thước Bảng</div>
-                <div className="settings-desc">Hiện tại: {gridSize}×{gridSize}</div>
+                <div className="settings-label">Board Size</div>
+                <div className="settings-desc">Current: {gridSize}×{gridSize}</div>
                 <div className="size-btns">
                   {[3, 4, 5, 6].map((size) => (
                     <button
@@ -2250,8 +2250,8 @@ function App() {
               </div>
 
               <div className="settings-section">
-                <div className="settings-label">Chế Độ Chơi</div>
-                <div className="settings-desc">{gameMode === 'pvp' ? 'Người vs Người' : 'Người vs AI'}</div>
+                <div className="settings-label">Game Mode</div>
+                <div className="settings-desc">{gameMode === 'pvp' ? 'Player vs Player' : 'Player vs AI'}</div>
                 <div className="mode-btns">
                   <button className={`md-btn ${gameMode === 'pvp' ? 'on' : ''}`} onClick={() => setGameMode('pvp')}>
                     PvP
@@ -2262,13 +2262,13 @@ function App() {
                 </div>
               </div>
 
-              <div className="settings-nav-title">CHUYỂN MÀN HÌNH</div>
+              <div className="settings-nav-title">SCREEN NAVIGATION</div>
               <div className="settings-nav-list">
-                <button className="settings-nav-btn" onClick={goHome}>🏠 Trang Chủ</button>
-                <button className="settings-nav-btn" onClick={openProfile}>👤 Trang Cá Nhân</button>
-                <button className="settings-nav-btn" onClick={() => setScreen('game')}>🎮 Ván Chơi</button>
-                <button className="settings-nav-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
-                <button className="settings-nav-btn" onClick={showHistory}>📋 Lịch Sử On-Chain</button>
+                <button className="settings-nav-btn" onClick={goHome}>🏠 Home</button>
+                <button className="settings-nav-btn" onClick={openProfile}>👤 Profile</button>
+                <button className="settings-nav-btn" onClick={() => setScreen('game')}>🎮 Game</button>
+                <button className="settings-nav-btn" onClick={() => setScreen('room')}>🚪 Create / Join Room</button>
+                <button className="settings-nav-btn" onClick={showHistory}>📋 On-chain History</button>
               </div>
             </div>
           </section>
@@ -2280,7 +2280,7 @@ function App() {
               <div className="profile-head">
                 <div className="profile-avatar">{authUser?.avatar || '🎮'}</div>
                 <div>
-                  <div className="profile-name">{authUser?.username || 'Người Chơi'}</div>
+                  <div className="profile-name">{authUser?.username || 'Player'}</div>
                   <div className="profile-email">{authUser?.email || 'no-email@chain.io'}</div>
                   <div className="profile-id">ID: {authUser?.id || 'guest'}</div>
                 </div>
@@ -2289,50 +2289,50 @@ function App() {
               <div className="profile-grid">
                 <div className="profile-stat">
                   <div className="profile-stat-value">{gameHistory.length}</div>
-                  <div className="profile-stat-label">Ván Đã Chơi</div>
+                  <div className="profile-stat-label">Matches Played</div>
                 </div>
                 <div className="profile-stat">
                   <div className="profile-stat-value">{winRate}%</div>
-                  <div className="profile-stat-label">Tỉ Lệ Thắng X</div>
+                  <div className="profile-stat-label">X Win Rate</div>
                 </div>
                 <div className="profile-stat">
                   <div className="profile-stat-value">{totalEth.toFixed(3)}</div>
-                  <div className="profile-stat-label">Tổng Stake ROSE</div>
+                  <div className="profile-stat-label">Total ROSE Stake</div>
                 </div>
               </div>
 
               <div className="profile-wallet-card">
-                <div className="profile-wallet-title">⬡ Ví Blockchain</div>
+                <div className="profile-wallet-title">⬡ Blockchain Wallet</div>
                 <div className="profile-wallet-row">
                   <span className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
                   <span className="profile-wallet-address">{walletAddress}</span>
                   <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected || walletPending}>
-                    {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
+                    {walletConnected ? '✓ Connected' : walletPending ? 'Connecting...' : 'Connect'}
                   </button>
                 </div>
                 <div className="profile-wallet-meta">
                   {walletConnected ? (
                     <>
-                      Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
+                      Balance: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                     </>
                   ) : (
-                    'Chưa kết nối ví'
+                    'Wallet not connected'
                   )}
                 </div>
               </div>
 
               <div className="profile-section">
-                <div className="profile-section-title">Thông Tin Tài Khoản</div>
-                <div className="profile-row"><span>Tham gia từ</span><strong>{authUser?.joinedDate || 'N/A'}</strong></div>
-                <div className="profile-row"><span>Chế độ ưa thích</span><strong>{gameMode === 'ai' ? 'Vs AI' : 'PvP Local'}</strong></div>
-                <div className="profile-row"><span>Kích thước bàn mặc định</span><strong>{gridSize}x{gridSize}</strong></div>
+                <div className="profile-section-title">Account Information</div>
+                <div className="profile-row"><span>Joined</span><strong>{authUser?.joinedDate || 'N/A'}</strong></div>
+                <div className="profile-row"><span>Preferred mode</span><strong>{gameMode === 'ai' ? 'Vs AI' : 'Local PvP'}</strong></div>
+                <div className="profile-row"><span>Default board size</span><strong>{gridSize}x{gridSize}</strong></div>
                 <div className="profile-row"><span>Theme</span><strong>{themeMode === 'dark' ? 'Dark Neon' : 'Light Neon'}</strong></div>
               </div>
 
               <div className="profile-actions">
-                <button className="btn-ghost" onClick={goHome}>🏠 Trang Chủ</button>
-                <button className="btn-ghost" onClick={openSettings}>⚙ Cài Đặt</button>
-                <button className="btn-primary" onClick={startGame}>⚡ Bắt Đầu Ngay</button>
+                <button className="btn-ghost" onClick={goHome}>🏠 Home</button>
+                <button className="btn-ghost" onClick={openSettings}>⚙ Settings</button>
+                <button className="btn-primary" onClick={startGame}>⚡ Start Now</button>
               </div>
             </div>
           </section>
@@ -2342,14 +2342,14 @@ function App() {
           <section className="screen room-screen">
             <div className="room-shell">
               <div className="room-header-row">
-                <button className="btn-ghost" onClick={goHome}>← Quay lại</button>
-                <div className="room-header-title">Phòng Chơi Online</div>
+                <button className="btn-ghost" onClick={goHome}>← Back</button>
+                <div className="room-header-title">Online Room</div>
               </div>
 
               <div className="card room-card">
-                <div className="card-title">🚪 Tạo Phòng Mới</div>
+                <div className="card-title">🚪 Create New Room</div>
                 <p className="room-desc">
-                  Tạo phòng riêng và chia sẻ mã cho đối thủ để bắt đầu ván đấu.
+                  Create a private room and share the code with the opponent to start the match.
                 </p>
                 <div className="row">
                   <label>Kích Thước Bảng</label>
@@ -2378,19 +2378,19 @@ function App() {
                   </div>
                 </div>
                 <div className="room-contract-status">{contractCheckMessage}</div>
-                <button className="btn-primary room-create-btn" onClick={createRoom} disabled={!contractConfigured}>⚡ TẠO PHÒNG</button>
+                <button className="btn-primary room-create-btn" onClick={createRoom} disabled={!contractConfigured}>⚡ CREATE ROOM</button>
               </div>
 
               <div className="room-divider-row">
                 <div className="room-divider-line" />
-                <span>HOẶC</span>
+                <span>OR</span>
                 <div className="room-divider-line" />
               </div>
 
               <div className="card room-card">
-                <div className="card-title">🔑 Vào Phòng</div>
+                <div className="card-title">🔑 Join Room</div>
                 <p className="room-desc">
-                  Nhập mã phòng 6 ký tự để tham gia ván đấu.
+                  Enter the 6-character room code to join the match.
                 </p>
                 <div className="join-row">
                   <input
@@ -2402,7 +2402,7 @@ function App() {
                     onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
                   />
                   <button className="btn-primary room-join-btn" onClick={joinRoom} disabled={!contractConfigured}>
-                    Vào →
+                    Join →
                   </button>
                 </div>
               </div>
@@ -2412,23 +2412,23 @@ function App() {
 
         {screen === 'waiting' && (
           <section className="screen waiting-screen">
-            <div className="waiting-title">Phòng Chờ</div>
+            <div className="waiting-title">Waiting Room</div>
 
             <div className="room-code-box">
-              <div className="code-label">Mã Phòng</div>
+              <div className="code-label">Room Code</div>
               <div className="code-val">{roomCode}</div>
-              <div className="code-hint">Chia sẻ mã này cho đối thủ</div>
+              <div className="code-hint">Share this code with the opponent</div>
               <div className="players-row">
                 <div className="player-slot">
                   <div className="slot-avatar p1">X</div>
-                  <div className="slot-name">Bạn</div>
+                  <div className="slot-name">You</div>
                 </div>
                 <div className="vs-sep">VS</div>
                 <div className="player-slot">
                   <div className={`slot-avatar ${roomPlayers >= 2 ? 'p2' : 'empty'}`}>
                     {roomPlayers >= 2 ? 'O' : '?'}
                   </div>
-                  <div className="slot-name">{roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}</div>
+                  <div className="slot-name">{roomPlayers >= 2 ? 'Opponent' : 'Waiting...'}</div>
                 </div>
               </div>
             </div>
@@ -2436,11 +2436,11 @@ function App() {
             {roomCountdown !== null ? (
               <div key={roomCountdown} className="countdown">{roomCountdown}</div>
             ) : (
-              <div className="waiting-label">⏳ Đang chờ đối thủ...</div>
+              <div className="waiting-label">⏳ Waiting for the opponent...</div>
             )}
 
             <div className="chat-box">
-              <div className="chat-header">💬 Chat Phòng</div>
+              <div className="chat-header">💬 Room Chat</div>
               <div className="chat-messages">
                 {roomChat.map((msg) => (
                   <div key={msg.id} className="chat-msg">
@@ -2454,16 +2454,16 @@ function App() {
               <div className="chat-send">
                 <input
                   className="chat-inp"
-                  placeholder="Nhắn tin..."
+                  placeholder="Type a message..."
                   value={chatMsg}
                   onChange={(e) => setChatMsg(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && sendChat()}
                 />
-                <button className="chat-send-btn" onClick={sendChat}>Gửi</button>
+                <button className="chat-send-btn" onClick={sendChat}>Send</button>
               </div>
             </div>
 
-            <button className="btn-ghost" onClick={goHome}>← Thoát Phòng</button>
+            <button className="btn-ghost" onClick={goHome}>← Leave Room</button>
           </section>
         )}
 
@@ -2471,14 +2471,14 @@ function App() {
           <section className="screen game-screen" id="gameScreen">
             <div className="scoreboard">
               <div className={`p-card ${currentPlayer === 1 ? 'active' : ''}`} id="p1Card">
-                <div className="p-name">NGƯỜI CHƠI <span className="player-color">X</span></div>
+                <div className="p-name">PLAYER <span className="player-color">X</span></div>
                 <div className="p-score score-p1">{scores[0]}</div>
                 <div className="p-boxes">{scores[0]} ô</div>
               </div>
               <div className="vs">VS</div>
               <div className={`p-card p2 ${currentPlayer === 2 ? 'active' : ''}`} id="p2Card">
                 <div className="p-name">
-                  {gameMode === 'ai' ? 'AI' : 'NGƯỜI CHƠI'} <span className="player-color player-p2">O</span>
+                  {gameMode === 'ai' ? 'AI' : 'PLAYER'} <span className="player-color player-p2">O</span>
                 </div>
                 <div className="p-score score-p2">{scores[1]}</div>
                 <div className="p-boxes">{scores[1]} ô</div>
@@ -2510,7 +2510,7 @@ function App() {
               <span className={currentPlayer === 1 ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>
                 {currentPlayer === 1 ? 'X' : gameMode === 'ai' ? 'AI (O) 🤖' : 'O'}
               </span>{' '}
-              · {gameActive ? 'Đang chơi' : 'Kết thúc'}
+              · {gameActive ? 'Playing' : 'Finished'}
             </div>
 
             <div className="board-wrap board-wrap--game">
@@ -2527,8 +2527,8 @@ function App() {
             </div>
 
             <div className="game-actions">
-              <button className="btn-ghost" onClick={goHome}>← Thoát</button>
-              <button className="btn-ghost" onClick={openSettings}>⚙ Cài đặt</button>
+              <button className="btn-ghost" onClick={goHome}>← Exit</button>
+              <button className="btn-ghost" onClick={openSettings}>⚙ Settings</button>
             </div>
           </section>
         )}
@@ -2537,25 +2537,25 @@ function App() {
           <section className="screen history-screen" id="historyScreen">
             <div className="history-top-row">
               <div>
-                <div className="h-title">⬡ Lịch Sử On-Chain</div>
+                <div className="h-title">⬡ On-chain History</div>
                 <div className="history-chain-sub">
                   Oasis Sapphire Testnet · Smart Contract {contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa sẵn sàng'}
                 </div>
               </div>
-              <button className="btn-ghost" onClick={goHome}>← Quay Lại</button>
+              <button className="btn-ghost" onClick={goHome}>← Back</button>
             </div>
 
             <div className="stats-row">
-              <div className="stat-card"><div className="s-val c1">{gameHistory.length}</div><div className="s-lbl">Ván Đã Chơi</div></div>
-              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ROSE</div></div>
-              <div className="stat-card"><div className="s-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div><div className="s-lbl">Win Rate X</div></div>
+              <div className="stat-card"><div className="s-val c1">{gameHistory.length}</div><div className="s-lbl">Matches Played</div></div>
+              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Total ROSE</div></div>
+              <div className="stat-card"><div className="s-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div><div className="s-lbl">X Win Rate</div></div>
             </div>
 
             <div className="h-list">
               {!gameHistory.length && (
                 <div className="empty-state">
                   <div className="empty-icon">📭</div>
-                  <div>Chưa có ván nào được ghi on-chain</div>
+                  <div>No on-chain matches yet</div>
                 </div>
               )}
 
@@ -2563,17 +2563,17 @@ function App() {
                 const badgeClass = game.winner === 0 ? 'draw' : game.winner === 1 ? 'p1' : 'p2'
                 const badgeText =
                   game.winner === 0
-                    ? 'HÒA'
+                    ? 'DRAW'
                     : game.winner === 1
-                      ? 'X THẮNG'
-                      : `${game.mode === 'ai' ? 'AI (O)' : 'O'} THẮNG`
+                      ? 'X WINS'
+                      : `${game.mode === 'ai' ? 'AI (O)' : 'O'} WINS`
 
                 return (
                   <div className="h-item" key={game.id}>
                     <div className="h-num">#{gameHistory.length - idx}</div>
                     <div>
                       <div className="h-players">X vs {game.mode === 'ai' ? 'AI (O) 🤖' : 'O'} · {game.gridSize}×{game.gridSize}</div>
-                      <div className="h-meta">{game.date} · {game.moves} nước đi</div>
+                      <div className="h-meta">{game.date} · {game.moves} moves</div>
                     </div>
                     <div className="h-result-wrap">
                       <span className={`badge ${badgeClass}`}>{badgeText}</span>
@@ -2599,9 +2599,9 @@ function App() {
             <div className="modal-sub">{modalState.sub}</div>
             <div className="modal-tx">{modalState.tx}</div>
             <div className="modal-btns">
-              <button className="btn-ghost" onClick={showHistory}>📋 Lịch Sử</button>
+              <button className="btn-ghost" onClick={showHistory}>📋 History</button>
               <button className="btn-primary" onClick={playAgain} disabled={rematchPending}>
-                {rematchPending ? '⏳ Đang chờ đối thủ...' : '▶ Chơi Lại'}
+                {rematchPending ? '⏳ Waiting for opponent...' : '▶ Play Again'}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
-# SQUAREXO - QUICK START (Chỉ Lệnh, Không Giải Thích)
+# SQUAREXO - QUICK START (Commands Only, No Explanations)
 
-## **1. CHUẨN BỊ MÔI TRƯỜNG**
+## **1. PREPARE THE ENVIRONMENT**
 ```bash
 git clone https://github.com/VuNgNgocBao04/SQUAREXO.git
 cd SQUAREXO
@@ -9,11 +9,11 @@ docker compose up -d postgres
 docker compose ps  # Verify postgres is healthy
 ```
 
-## **2. CẤU HÌNH & SETUP DATABASE**
+## **2. CONFIGURE AND SET UP THE DATABASE**
 ```bash
 cd packages/backend
 
-# Tạo .env với nội dung bên dưới
+# Create `.env` with the contents below
 cat > .env << 'EOF'
 DATABASE_URL=postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public
 PORT=3000
@@ -28,19 +28,19 @@ OASIS_RPC_URL=https://testnet.sapphire.oasis.io
 OASIS_RPC_FALLBACK_URLS=https://sapphire-testnet.gateway.tenderly.co,https://testnet.sapphire.oasis.dev
 OASIS_EXPECTED_CHAIN_ID=23295
 BLOCKCHAIN_TX_TIMEOUT_MS=45000
-CONTRACT_ADDRESS=0x  # Thêm sau khi deploy
-BACKEND_SIGNER_PRIVATE_KEY=0x  # Thêm sau khi deploy
+CONTRACT_ADDRESS=0x  # Add after deployment
+BACKEND_SIGNER_PRIVATE_KEY=0x  # Add after deployment
 EOF
 
 pnpm prisma:generate
 pnpm prisma:push
 ```
 
-## **3. DEPLOY CONTRACT (TUỲ CHỌN - NẾU CÓ TESTNET ROSE)**
+## **3. DEPLOY THE CONTRACT (OPTIONAL - IF YOU HAVE TESTNET ROSE)**
 ```bash
 cd ../contracts
 
-# Tạo .env
+# Create `.env`
 cat > .env << 'EOF'
 OASIS_RPC_URL=https://testnet.sapphire.oasis.io
 OASIS_MAINNET_RPC_URL=https://sapphire.oasis.io
@@ -54,11 +54,11 @@ pnpm build
 pnpm test
 pnpm deploy:testnet
 
-# Ghi lại contract address được output
-# Cập nhật lại packages/backend/.env với CONTRACT_ADDRESS và BACKEND_SIGNER_PRIVATE_KEY
+# Record the contract address that is output
+# Update `packages/backend/.env` with `CONTRACT_ADDRESS` and `BACKEND_SIGNER_PRIVATE_KEY`
 ```
 
-## **4. CẤU HÌNH FRONTEND**
+## **4. CONFIGURE THE FRONTEND**
 ```bash
 cd ../frontend
 
@@ -71,7 +71,7 @@ VITE_CONTRACT_ADDRESS=0x<contract_address_from_deploy>
 EOF
 ```
 
-## **5. KHỞI ĐỘNG BACKEND (TERMINAL 1)**
+## **5. START THE BACKEND (TERMINAL 1)**
 ```bash
 cd packages/backend
 pnpm dev
@@ -79,7 +79,7 @@ pnpm dev
 # Output: [INFO] listening on port 3000
 ```
 
-## **6. KHỞI ĐỘNG FRONTEND (TERMINAL 2 - MỚI)**
+## **6. START THE FRONTEND (TERMINAL 2 - NEW)**
 ```bash
 cd packages/frontend
 pnpm dev
@@ -87,58 +87,58 @@ pnpm dev
 # Output: Local: http://localhost:5173/
 ```
 
-## **7. DEMO TRÊN BROWSER**
+## **7. DEMO IN THE BROWSER**
 
-### 7.1 Mở Browser 1
+### 7.1 Open Browser 1
 - URL: `http://localhost:5173`
-- Đăng nhập: username=`player1`, password=`password123`
-- Kết nối ví A (MetaMask Profile 1)
-- Chọn PVP Online → Nhập stake 0.1 ROSE → Bấm "Tạo Phòng Cược"
-- Ghi nhớ mã phòng (ví dụ: `ABCD12`)
+- Log in with username=`player1`, password=`password123`
+- Connect wallet A (MetaMask Profile 1)
+- Choose PVP Online -> enter a 0.1 ROSE stake -> click "Create Bet Room"
+- Note the room code (for example: `ABCD12`)
 
-### 7.2 Mở Browser 2 (Profile/Ví khác)
+### 7.2 Open Browser 2 (different profile/wallet)
 - URL: `http://localhost:5173`
-- Đăng nhập: username=`player2`, password=`password123`
-- Kết nối ví B (MetaMask Profile 2)
-- Chọn PVP Online → Join Phòng → Nhập mã `ABCD12` → Bấm "Tham Gia Phòng"
+- Log in with username=`player2`, password=`password123`
+- Connect wallet B (MetaMask Profile 2)
+- Choose PVP Online -> Join Room -> enter `ABCD12` -> click "Join Room"
 
-### 7.3 Chơi Game
-- Browser 1 (Player X): Bấm vào đường trên board
-- Browser 2 (Player O): Chờ sync → Bấm vào đường khác
-- Lặp lại cho đến khi có người được 5 ô
+### 7.3 Play the Game
+- Browser 1 (Player X): click a line on the board
+- Browser 2 (Player O): wait for sync -> click another line
+- Repeat until one player gets 5 boxes
 
-### 7.4 Kết Thúc & Claim Reward
-- Game kết thúc, modal hiển thị kết quả
-- Người thắng bấm "Claim Reward" để nhận pot
+### 7.4 Finish and Claim Reward
+- The game ends and a modal shows the result
+- The winner clicks "Claim Reward" to receive the pot
 
-### 7.5 Kiểm Tra History
-- Chuyển sang tab "HISTORY"
-- Trận vừa chơi sẽ hiển thị trong danh sách
+### 7.5 Check History
+- Switch to the "HISTORY" tab
+- The match you just played will appear in the list
 
-## **8. DỪNG DEMO**
+## **8. STOP THE DEMO**
 ```bash
 # Terminal chạy Frontend: Ctrl+C
 # Terminal chạy Backend: Ctrl+C
-# (Tuỳ chọn) Dừng Database: docker compose down
+# (Optional) Stop the database: docker compose down
 ```
 
 ---
 
-## **KIỂM TRA NHANH**
+## **QUICK CHECKS**
 
-### Backend sẵn sàng?
+### Is the backend ready?
 ```bash
 curl http://localhost:3000/health
 ```
 
-### Database sẵn sàng?
+### Is the database ready?
 ```bash
 docker compose ps
 ```
 
-### Reset Database (nếu cần)
+### Reset the database (if needed)
 ```bash
-# Từ thư mục gốc
+# From the repository root
 docker compose down -v
 docker compose up -d postgres
 cd packages/backend && pnpm prisma:push
@@ -148,7 +148,7 @@ cd packages/backend && pnpm prisma:push
 
 ## **NOTES**
 
-- **Mà hình 1**: Không có contract address trong `.env` → blockchain features vô hiệu hóa, nhưng realtime + DB vẫn work
-- **Mà hình 2** (Có contract): Demo toàn bộ tính năng kể cả on-chain settlement
-- **Auth hiện tại**: Mock localStorage. Backend auth API đã có ở `/api/auth/*`
-- **History**: Lưu vào PostgreSQL, persist sau khi reload page
+- **Scenario 1**: No contract address in `.env` -> blockchain features are disabled, but realtime and DB still work
+- **Scenario 2** (contract configured): Demo all features, including on-chain settlement
+- **Current auth**: Mocked with localStorage. Backend auth API is available at `/api/auth/*`
+- **History**: Stored in PostgreSQL and persists after page reloads

@@ -1,58 +1,58 @@
-# SQUAREXO - Kịch Bản Demo Chi Tiết (Từng Lệnh Cụ Thể)
+# SQUAREXO - Detailed Demo Script (Exact Commands)
 
-## **PHẦN 0: CHUẨN BỊ TRƯỚC DEMO**
+## **PART 0: PRE-DEMO PREPARATION**
 
-### Yêu cầu môi trường
-- **Node.js**: 20+ hoặc 22 LTS (kiểm tra: `node --version`)
-- **pnpm**: 10.32.1+ (kiểm tra: `pnpm --version`)
-- **Docker Desktop**: đang chạy với Linux containers
-- **MetaMask**: extension đã cài trên 2 trình duyệt hoặc 2 profile khác nhau
-- **Testnet ROSE tokens**: Faucet từ https://faucet.testnet.oasis.io
+### Environment requirements
+- **Node.js**: 20+ or 22 LTS (check with `node --version`)
+- **pnpm**: 10.32.1+ (check with `pnpm --version`)
+- **Docker Desktop**: running with Linux containers
+- **MetaMask**: installed in two browsers or two separate profiles
+- **Testnet ROSE tokens**: faucet at https://faucet.testnet.oasis.io
 
-### Bước 0.1: Clone repo (nếu chưa có)
+### Step 0.1: Clone the repo (if needed)
 ```bash
 git clone https://github.com/VuNgNgocBao04/SQUAREXO.git
 cd SQUAREXO
 ```
 
-### Bước 0.2: Cài dependencies
-Từ thư mục gốc của SQUAREXO:
+### Step 0.2: Install dependencies
+From the SQUAREXO repository root:
 ```bash
 pnpm install
 ```
 
 ---
 
-## **PHẦN 1: KHỞI ĐỘNG DATABASE**
+## **PART 1: START THE DATABASE**
 
-### Bước 1.1: Khởi động PostgreSQL container
-Từ thư mục gốc:
+### Step 1.1: Start the PostgreSQL container
+From the repository root:
 ```bash
 docker compose up -d postgres
 ```
 
-**Kỳ vọng:**
-- Container `squarexo-postgres` được khởi động.
-- Status là `healthy` sau vài giây.
+**Expected:**
+- The `squarexo-postgres` container starts.
+- Status becomes `healthy` after a few seconds.
 
 **Kiểm tra:**
 ```bash
 docker compose ps
 ```
 
-Bạn sẽ thấy:
+You should see:
 ```
 NAME                      STATUS
 squarexo-postgres         healthy
 ```
 
-### Bước 1.2: Cấu hình Database URL cho Backend
-Tại `packages/backend`, tạo file `.env`:
+### Step 1.2: Configure the database URL for the backend
+In `packages/backend`, create a `.env` file:
 ```bash
 cd packages/backend
 ```
 
-Tạo file `.env` với nội dung:
+Create the `.env` file with the following contents:
 ```env
 DATABASE_URL=postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public
 PORT=3000
@@ -64,7 +64,7 @@ JWT_AUDIENCE=squarexo-clients
 JWT_EXPIRES_IN=7d
 REFRESH_TOKEN_EXPIRES_IN=30d
 
-# Blockchain (nếu chạy với contract)
+# Blockchain (if running with the contract)
 OASIS_RPC_URL=https://testnet.sapphire.oasis.io
 OASIS_RPC_FALLBACK_URLS=https://sapphire-testnet.gateway.tenderly.co,https://testnet.sapphire.oasis.dev
 OASIS_EXPECTED_CHAIN_ID=23295
@@ -73,16 +73,16 @@ CONTRACT_ADDRESS=0x<contract_address_sau_khi_deploy>
 BACKEND_SIGNER_PRIVATE_KEY=0x<private_key_sau_khi_deploy>
 ```
 
-**Lưu ý**: `BACKEND_SIGNER_PRIVATE_KEY` là private key của ví sẽ submit kết quả game lên chain (không phải ví người chơi).
+**Note**: `BACKEND_SIGNER_PRIVATE_KEY` is the private key for the wallet that submits game results on-chain, not the player's wallet.
 
-### Bước 1.3: Đồng bộ Prisma schema
-Vẫn ở thư mục `packages/backend`:
+### Step 1.3: Sync the Prisma schema
+Still in `packages/backend`:
 ```bash
 pnpm prisma:generate
 pnpm prisma:push
 ```
 
-**Kỳ vọng:**
+**Expected:**
 ```
 Environment variables loaded from .env
 Prisma schema loaded from prisma/schema.prisma
@@ -92,17 +92,17 @@ Datasource "db": PostgreSQL database "squarexo"
 
 ---
 
-## **PHẦN 2: DEPLOY SMART CONTRACT (TUỲ CHỌN)**
+## **PART 2: DEPLOY THE SMART CONTRACT (OPTIONAL)**
 
-Nếu bạn chỉ muốn test realtime + DB mà không cần blockchain, bỏ qua phần này đến **PHẦN 3**.
+If you only want to test realtime + DB without blockchain, skip this section and go to **PART 3**.
 
-### Bước 2.1: Chuẩn bị file `.env` cho contracts
-Đi tới `packages/contracts`:
+### Step 2.1: Prepare the `.env` file for contracts
+Go to `packages/contracts`:
 ```bash
 cd ../contracts
 ```
 
-Tạo file `.env`:
+Create the `.env` file:
 ```env
 OASIS_RPC_URL=https://testnet.sapphire.oasis.io
 OASIS_MAINNET_RPC_URL=https://sapphire.oasis.io
@@ -112,49 +112,49 @@ MATCH_JOIN_TIMEOUT_SECONDS=900
 MATCH_RESULT_TIMEOUT_SECONDS=3600
 ```
 
-**Lưu ý**: 
-- `DEPLOYER_PRIVATE_KEY`: Private key của ví deploy contract lên testnet (cần ROSE tokens).
-- `BACKEND_SIGNER_ADDRESS`: Address (không phải private key) của ví backend signer.
+**Note**:
+- `DEPLOYER_PRIVATE_KEY`: the private key of the wallet used to deploy the contract to testnet (requires ROSE tokens).
+- `BACKEND_SIGNER_ADDRESS`: the address, not the private key, of the backend signer wallet.
 
-### Bước 2.2: Build contract
+### Step 2.2: Build the contract
 ```bash
 pnpm build
 ```
 
-**Kỳ vọng:**
+**Expected:**
 ```
 Compiling 7 files with 0.8.24
 Solc 0.8.24 finished in 1.23s
 ```
 
-### Bước 2.3: Test contract
+### Step 2.3: Test the contract
 ```bash
 pnpm test
 ```
 
-**Kỳ vọng:** Tất cả test pass.
+**Expected:** All tests pass.
 
-### Bước 2.4: Deploy lên Sapphire Testnet
+### Step 2.4: Deploy to Sapphire Testnet
 ```bash
 pnpm deploy:testnet
 ```
 
-**Kỳ vọng:**
+**Expected:**
 ```
 Deployed SquarexoMatch to 0x<contract_address>
 ```
 
-**Ghi lại contract address này**, ví dụ: `0xABC123...`
+**Record this contract address**, for example: `0xABC123...`
 
-### Bước 2.5: Cập nhật Backend với Contract Address
-Quay lại `packages/backend/.env`, thêm:
+### Step 2.5: Update the backend with the contract address
+Return to `packages/backend/.env` and add:
 ```env
 CONTRACT_ADDRESS=0x<contract_address_vua_deploy>
 BACKEND_SIGNER_PRIVATE_KEY=0x<backend_signer_private_key>
 ```
 
-### Bước 2.6: Cập nhật Frontend với Contract Address
-Tại `packages/frontend`, tạo file `.env`:
+### Step 2.6: Update the frontend with the contract address
+In `packages/frontend`, create a `.env` file:
 ```bash
 cd ../frontend
 ```
@@ -170,72 +170,72 @@ VITE_CONTRACT_ADDRESS=0x<contract_address_vua_deploy>
 
 ---
 
-## **PHẦN 3: KHỞI ĐỘNG BACKEND**
+## **PART 3: START THE BACKEND**
 
-Từ thư mục `packages/backend`:
+From `packages/backend`:
 ```bash
 pnpm dev
 ```
 
-**Kỳ vọng:**
+**Expected:**
 ```
 [INFO] listening on port 3000
 ```
 
-**Backend đã sẵn sàng**. Để chạy tiếp các bước sau, mở **terminal mới**.
+**The backend is ready**. Open a **new terminal** to continue.
 
 ---
 
-## **PHẦN 4: KHỞI ĐỘNG FRONTEND**
+## **PART 4: START THE FRONTEND**
 
-Mở **terminal mới**, di chuyển tới `packages/frontend`:
+Open a **new terminal** and move to `packages/frontend`:
 ```bash
 cd packages/frontend
 pnpm dev
 ```
 
-**Kỳ vọng:**
+**Expected:**
 ```
   VITE v5.4.21  ready in 234 ms
 
   ➜  Local:   http://localhost:5173/
 ```
 
-Mở browser đến `http://localhost:5173`
+Open the browser at `http://localhost:5173`
 
 ---
 
-## **PHẦN 5: DEMO THỰC TẾ - BƯỚC CHI TIẾT**
+## **PART 5: LIVE DEMO - STEP BY STEP**
 
-### **BƯỚC 5.1: Đăng nhập trên Browser 1**
+### **STEP 5.1: Log in on Browser 1**
 
-**Thao tác:**
-1. Tại màn hình "Auth", chọn tab "LOGIN".
-2. Nhập:
+**Actions:**
+1. On the "Auth" screen, select the "LOGIN" tab.
+2. Enter:
    - Username: `player1`
    - Password: `password123`
-3. Bấm "Đăng Nhập"
+3. Click "Log In"
 
-**Kỳ vọng:**
-- Chuyển sang màn hình HOME.
-- Thấy dòng "Xin chào, player1".
+**Expected:**
+- The app switches to the HOME screen.
+- You see "Hello, player1".
 
 ---
 
-### **BƯỚC 5.2: Kết nối Ví MetaMask - Browser 1**
+### **STEP 5.2: Connect MetaMask Wallet - Browser 1**
 
-**Thao tác:**
-1. Trên browser 1 (Profile 1), mở MetaMask extension.
-2. Chọn ví A (có ROSE balance).
-3. Quay lại app SQUAREXO.
-4. Bấm nút "Kết Nối" (trong phần BLOCKCHAIN/WALLET).
+**Actions:**
+1. In browser 1 (Profile 1), open the MetaMask extension.
+2. Select wallet A (with a ROSE balance).
+3. Return to the SQUAREXO app.
+4. Click the "Connect" button (in the BLOCKCHAIN/WALLET section).
 
-**Kỳ vọng:**
-- MetaMask popup yêu cầu kết nối.
-- Sau khi confirm, app hiển thị:
+**Expected:**
+- MetaMask shows a connection prompt.
+- After confirming, the app displays:
   - Address: `0xABC1...XYZ9` (ví A).
   - Balance: `X.XXXX ROSE`.
-  - Nút đổi thành: `✓ Đã kết nối`.
+  - The button changes to: `✓ Connected`.
 
 ---
 

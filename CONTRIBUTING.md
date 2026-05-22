@@ -1,14 +1,14 @@
 # Contributing
 
-Tài liệu này ghi lại workflow đóng góp đang phù hợp với cấu trúc workspace hiện tại.
+This document captures the contribution workflow that matches the current workspace structure.
 
-## 1. Yêu cầu môi trường
+## 1. Environment Requirements
 
-- Node.js 22 (workflow CI đang dùng Node 22)
+- Node.js 22 (the CI workflow uses Node 22)
 - pnpm
-- Docker (để chạy Postgres local)
+- Docker (to run local Postgres)
 
-## 2. Cài đặt
+## 2. Setup
 
 ```bash
 corepack enable
@@ -16,26 +16,26 @@ docker compose up -d postgres
 pnpm install --fix-lockfile
 ```
 
-Tạo `.env` từ các file mẫu:
+Create `.env` files from the examples:
 
 - `packages/backend/.env.example`
 - `packages/frontend/.env.example`
 - `packages/contracts/.env.example`
 
-Backend DB init:
+Initialize the backend database:
 
 ```bash
 pnpm --filter backend prisma:generate
 pnpm --filter backend prisma:push
 ```
 
-## 3. Quy tắc branch / commit
+## 3. Branch and Commit Rules
 
-- Tạo branch từ nhánh làm việc hiện tại theo nhóm thay đổi (`feat/*`, `fix/*`, `docs/*`...)
-- Commit nhỏ, mô tả rõ phạm vi.
-- Không gộp sửa unrelated vào cùng PR.
+- Create branches from the current working branch using a change prefix such as `feat/*`, `fix/*`, or `docs/*`.
+- Keep commits small and scoped clearly.
+- Do not mix unrelated changes into the same PR.
 
-## 4. Luồng phát triển theo package
+## 4. Package Workflow
 
 ### Frontend
 
@@ -56,15 +56,15 @@ pnpm --filter contracts build
 pnpm --filter contracts test
 ```
 
-### Game-core
+### Game Core
 
 ```bash
 pnpm --filter game-core test
 ```
 
-## 5. Checklist trước khi mở PR
+## 5. PR Checklist
 
-Chạy tối thiểu các lệnh liên quan đến vùng bạn sửa:
+Run at least the commands relevant to the area you changed:
 
 ```bash
 pnpm --filter game-core test
@@ -74,30 +74,30 @@ pnpm --filter frontend build
 pnpm --filter contracts test
 ```
 
-Lưu ý hiện trạng repository:
-- backend build đang lỗi do duplicate export trong `socket/handler.ts`
-- frontend build đang lỗi do trùng file khác casing `GameCanvas.tsx` / `gameCanvas.tsx`
+Current repository notes:
+- Backend build is failing because of a duplicate export in `socket/handler.ts`.
+- Frontend build is failing because `GameCanvas.tsx` and `gameCanvas.tsx` differ only by casing.
 
-Nếu PR của bạn không xử lý các lỗi nền này, ghi rõ trong PR description để reviewer phân biệt với regression mới.
+If your PR does not address these baseline issues, mention them clearly in the PR description so reviewers can separate them from new regressions.
 
-## 6. Khi có thay đổi DB/Prisma
+## 6. When DB/Prisma Changes
 
-- Sửa `packages/backend/prisma/schema.prisma`
-- Chạy `prisma:generate`
-- Chạy `prisma:push` (dev local) hoặc `prisma:migrate` khi cần migration script
-- Test lại route/service liên quan
+- Update `packages/backend/prisma/schema.prisma`
+- Run `prisma:generate`
+- Run `prisma:push` for local development or `prisma:migrate` when you need a migration script
+- Re-test the affected routes or services
 
-## 7. Khi có thay đổi contract
+## 7. When Contract Changes
 
-- Cập nhật contract + test Hardhat
-- Re-compile và chạy test security
-- Nếu deploy mới, cập nhật địa chỉ contract trong env backend/frontend
-- Không commit private key hoặc secrets
+- Update the contract and its Hardhat tests
+- Recompile and run security tests
+- If you deploy a new version, update the contract address in backend/frontend env files
+- Do not commit private keys or secrets
 
-## 8. Review focus
+## 8. Review Focus
 
-Khi review PR, ưu tiên kiểm tra:
-- trạng thái sync realtime (turn, dedupe, reconnect)
-- auth token flow và middleware
-- compatibility giữa game-core và backend adapter
-- error handling khi blockchain không cấu hình hoặc tx timeout
+When reviewing a PR, prioritize checking:
+- realtime sync state (turns, deduplication, reconnects)
+- auth token flow and middleware
+- compatibility between `game-core` and the backend adapter
+- error handling when blockchain config is missing or txs time out
