@@ -98,6 +98,28 @@ type MatchSettledPayload = {
   winnerWallet?: string | null
 }
 
+type MatchSettlementFailedPayload = {
+  roomId: string
+  reason?: string
+}
+
+type RematchPromptPayload = {
+  roomId: string
+  from: OnlinePlayer
+  requesterId?: string
+  target?: 'opponent'
+}
+
+type RematchResponsePayload = {
+  roomId: string
+  accept: boolean
+}
+
+type RematchResultPayload = {
+  roomId: string
+  by?: OnlinePlayer
+}
+
 type ServerHistoryRecord = {
   id: string
   roomId: string
@@ -293,6 +315,9 @@ function App() {
   const [walletBalance, setWalletBalance] = useState('0.0000')
   const [walletPending, setWalletPending] = useState(false)
   const [chainStatus, setChainStatus] = useState<'idle' | 'staking' | 'playing' | 'settling' | 'settled'>('idle')
+  const [contractConfigured, setContractConfigured] = useState(false)
+  const [contractCheckMessage, setContractCheckMessage] = useState('Đang kiểm tra smart contract...')
+  const [rematchPending, setRematchPending] = useState(false)
 
   const [currentPlayer, setCurrentPlayer] = useState(1)
   const [scores, setScores] = useState<[number, number]>([0, 0])
@@ -670,11 +695,13 @@ function App() {
   const connectOnlineSocket = useCallback(async () => {
     disconnectOnlineSocket()
 
+    const token = getAccessToken()
+    if (!token) {
+      throw new Error('Chưa đăng nhập, không thể kết nối realtime')
+    }
+
     const socket = io(BACKEND_URL, {
-      auth: (() => {
-        const token = getAccessToken()
-        return token ? { token } : { playerId: clientPlayerIdRef.current }
-      })(),
+      auth: { token },
       transports: ['websocket'],
       timeout: 5000,
       reconnection: true,
@@ -774,6 +801,75 @@ function App() {
       }
     })
 
+    socket.on('match_settlement_failed', (payload: MatchSettlementFailedPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setChainStatus('settling')
+      setModalState((prev) => ({
+        ...prev,
+        sub: 'Backend chưa thể xác nhận giao dịch testnet. Vui lòng thử lại sau ít giây.',
+        tx: payload.reason ? `Lý do: ${payload.reason}` : 'Đang chờ retry settlement...',
+      }))
+      showToast('Settlement on-chain chưa thành công, hệ thống đang giữ kết quả để retry')
+    })
+
+    socket.on('room_cleaned', () => {
+      setModalState((prev) => ({ ...prev, open: false }))
+      setRematchPending(false)
+      setIsOnlineMatch(false)
+      setRoomCountdown(null)
+      setJoinCode('')
+      setRoomCodeSafe('')
+      setScreen('home')
+      showToast('Phòng đã đóng. Quay về màn hình chính.')
+    })
+
+    socket.on('rematch_prompt', (payload: RematchPromptPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      if (payload.target === 'opponent') {
+        const accept = window.confirm('Đối thủ muốn đấu lại. Bạn có đồng ý không?')
+        const response: RematchResponsePayload = {
+          roomId: payload.roomId,
+          accept,
+        }
+        socket.emit('rematch_response', response)
+      } else {
+        setRematchPending(true)
+        showToast('Đã gửi yêu cầu đấu lại. Đang chờ đối thủ phản hồi...')
+      }
+    })
+
+    socket.on('rematch_started', (payload: RematchResultPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setRematchPending(false)
+      setModalState((prev) => ({ ...prev, open: false }))
+      setChainStatus('playing')
+      endModalShownRef.current = false
+      showToast('Đối thủ đã đồng ý. Bắt đầu ván đấu mới!')
+    })
+
+    socket.on('rematch_declined', (payload: RematchResultPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setRematchPending(false)
+      setModalState((prev) => ({ ...prev, open: false }))
+      showToast('Đối thủ không đồng ý đấu lại. Trận đấu kết thúc cho cả hai.')
+    })
+
     socketRef.current = socket
 
     await new Promise<void>((resolve, reject) => {
@@ -821,14 +917,7 @@ function App() {
           roomId: code,
           rows: gridSizeRef.current,
           cols: gridSizeRef.current,
-        }
-
-        if (!getAccessToken()) {
-          socket.emit('join_room', {
-            ...payload,
-            playerId: clientPlayerIdRef.current,
-          })
-          return
+          stakeRose: stakeEthRef.current,
         }
 
         socket.emit('join_room', payload)
@@ -1199,6 +1288,7 @@ function App() {
 
   const startGame = useCallback(() => {
     setIsOnlineMatch(false)
+    setRematchPending(false)
     setChainStatus('idle')
     endModalShownRef.current = false
     const empty = createEmptyState(gridSize)
@@ -1235,6 +1325,7 @@ function App() {
     clearTimers()
     disconnectOnlineSocket()
     setIsOnlineMatch(false)
+    setRematchPending(false)
     setChainStatus('idle')
     setRoomCountdown(null)
     setJoinCode('')
@@ -1260,15 +1351,42 @@ function App() {
   }, [])
 
   const showHistory = useCallback(() => {
+    setModalState((prev) => ({ ...prev, open: false }))
     setScreen('history')
+  }, [])
+
+  const checkContractConfiguration = useCallback(async () => {
+    if (!CONTRACT_ADDRESS) {
+      setContractConfigured(false)
+      setContractCheckMessage('Smart contract chưa được cấu hình')
+      return false
+    }
+
+    try {
+      const provider = new ethers.JsonRpcProvider(OASIS_CONFIG.rpcUrls[0], OASIS_CHAIN_ID)
+      const code = await provider.getCode(CONTRACT_ADDRESS)
+      if (!code || code === '0x') {
+        setContractConfigured(false)
+        setContractCheckMessage('Không tìm thấy contract trên Oasis Sapphire')
+        return false
+      }
+
+      setContractConfigured(true)
+      setContractCheckMessage('Smart contract sẵn sàng trên Oasis Sapphire')
+      return true
+    } catch {
+      setContractConfigured(false)
+      setContractCheckMessage('Không thể xác minh contract từ RPC')
+      return false
+    }
   }, [])
 
   const withContractSigner = useCallback(async () => {
     if (!window.ethereum) {
       throw new Error('Không có provider ví trong trình duyệt')
     }
-    if (!CONTRACT_ADDRESS) {
-      throw new Error('Thiếu VITE_CONTRACT_ADDRESS')
+    if (!contractConfigured) {
+      throw new Error(contractCheckMessage)
     }
 
     const wrappedProvider = sapphire.wrapEthereumProvider(window.ethereum as any)
@@ -1276,7 +1394,7 @@ function App() {
     const signer = await browserProvider.getSigner()
     const contract = new ethers.Contract(CONTRACT_ADDRESS, squarexoMatchAbi, signer)
     return { contract, browserProvider }
-  }, [])
+  }, [contractCheckMessage, contractConfigured])
 
   const refreshWalletBalance = useCallback(async () => {
     if (!window.ethereum) {
@@ -1297,10 +1415,8 @@ function App() {
         throw new Error('Stake phải lớn hơn 0')
       }
 
-      // Allow realtime room flow even when blockchain contract is not configured.
-      if (!CONTRACT_ADDRESS) {
-        setChainStatus('playing')
-        return 'offchain-mode'
+      if (!contractConfigured) {
+        throw new Error(contractCheckMessage)
       }
 
       const value = ethers.parseEther(amount.toString())
@@ -1316,7 +1432,7 @@ function App() {
       setChainStatus('playing')
       return String(tx.hash)
     },
-    [refreshWalletBalance, withContractSigner],
+    [contractCheckMessage, contractConfigured, refreshWalletBalance, withContractSigner],
   )
 
   const claimReward = useCallback(async () => {
@@ -1338,18 +1454,6 @@ function App() {
         showToast('Please log in before creating an online room')
         return
       }
-      if (!getAccessToken() || !authUser) {
-        showToast('HÃ£y Ä‘Äƒng nháº­p trÆ°á»›c khi táº¡o phÃ²ng online')
-        return
-      }
-      if (!getAccessToken() || !authUser) {
-        showToast('HÃ£y Ä‘Äƒng nháº­p trÆ°á»›c khi vÃ o phÃ²ng online')
-        return
-      }
-      if (!getAccessToken() || !authUser) {
-        showToast('Please log in before joining an online room')
-        return
-      }
       if (!walletConnected) {
         showToast('Hãy kết nối ví trước khi tạo phòng cược')
         return
@@ -1358,11 +1462,7 @@ function App() {
       const code = genRoomCode()
       try {
         const txHash = await lockStakeOnChain(code, 'create')
-        if (txHash === 'offchain-mode') {
-          showToast('Chưa cấu hình contract, phòng chạy ở chế độ realtime off-chain')
-        } else {
-          showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
-        }
+        showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Không stake được khi tạo phòng'
         showToast(message)
@@ -1371,6 +1471,7 @@ function App() {
       }
 
       setRoomCodeSafe(code)
+      setRematchPending(false)
       updateRoomPlayers(1)
       setRoomChat([
         { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
@@ -1404,11 +1505,7 @@ function App() {
       const code = joinCode.trim().toUpperCase()
       try {
         const txHash = await lockStakeOnChain(code, 'join')
-        if (txHash === 'offchain-mode') {
-          showToast('Chưa cấu hình contract, vào phòng ở chế độ realtime off-chain')
-        } else {
-          showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
-        }
+        showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Không stake được khi vào phòng'
         showToast(message)
@@ -1417,6 +1514,7 @@ function App() {
       }
 
       setRoomCodeSafe(code)
+      setRematchPending(false)
       updateRoomPlayers(1)
       setRoomChat([
         { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
@@ -1534,6 +1632,7 @@ function App() {
         setWalletAccount(normalizedAddress)
         setWalletAddress(formatWalletLabel(address))
         setWalletBalance(ethers.formatEther(balanceWei))
+        await checkContractConfiguration()
         showToast(`Kết nối ví thành công trên ${OASIS_CHAIN_NAME}`)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Không thể kết nối ví'
@@ -1544,7 +1643,7 @@ function App() {
     }
 
     void connect()
-  }, [authUser, fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
+  }, [authUser, checkContractConfiguration, fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
 
   useEffect(() => {
     const ethereum = window.ethereum
@@ -1591,10 +1690,20 @@ function App() {
     }
   }, [authUser, refreshWalletBalance, showToast])
 
+  useEffect(() => {
+    void checkContractConfiguration()
+  }, [checkContractConfiguration])
+
   const playAgain = useCallback(() => {
+    if (isOnlineMatch && socketRef.current && roomCodeRef.current) {
+      socketRef.current.emit('rematch_request', { roomId: roomCodeRef.current })
+      setRematchPending(true)
+      return
+    }
+
     setModalState((prev) => ({ ...prev, open: false }))
     startGame()
-  }, [startGame])
+  }, [isOnlineMatch, startGame])
 
   const onCanvasMouseMove = useCallback(
     (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -2268,7 +2377,8 @@ function App() {
                     <span className="stake-unit">ROSE</span>
                   </div>
                 </div>
-                <button className="btn-primary room-create-btn" onClick={createRoom}>⚡ TẠO PHÒNG</button>
+                <div className="room-contract-status">{contractCheckMessage}</div>
+                <button className="btn-primary room-create-btn" onClick={createRoom} disabled={!contractConfigured}>⚡ TẠO PHÒNG</button>
               </div>
 
               <div className="room-divider-row">
@@ -2291,7 +2401,7 @@ function App() {
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
                   />
-                  <button className="btn-primary room-join-btn" onClick={joinRoom}>
+                  <button className="btn-primary room-join-btn" onClick={joinRoom} disabled={!contractConfigured}>
                     Vào →
                   </button>
                 </div>
@@ -2384,7 +2494,7 @@ function App() {
               <span className="t-sep">|</span>
               <div className="ticker-item"><span className="t-lbl">Moves</span><span className="t-val green">{totalMoves}</span></div>
               <span className="t-sep">|</span>
-              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{CONTRACT_ADDRESS ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Chưa cấu hình'}</span></div>
+              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Chưa sẵn sàng'}</span></div>
             </div>
 
             {isOnlineMatch && chainStatus === 'settled' && (
@@ -2429,7 +2539,7 @@ function App() {
               <div>
                 <div className="h-title">⬡ Lịch Sử On-Chain</div>
                 <div className="history-chain-sub">
-                  Oasis Sapphire Testnet · Smart Contract {CONTRACT_ADDRESS ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa cấu hình'}
+                  Oasis Sapphire Testnet · Smart Contract {contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa sẵn sàng'}
                 </div>
               </div>
               <button className="btn-ghost" onClick={goHome}>← Quay Lại</button>
@@ -2471,7 +2581,7 @@ function App() {
                     </div>
                     <div className="h-tx-wrap">
                       <div className="h-tx-hash">{game.tx.slice(0, 10)}...{game.tx.slice(-6)}</div>
-                      <div className="h-amount">{game.stake > 0 ? `${game.stake.toFixed(3)} ETH` : 'Free'}</div>
+                      <div className="h-amount">{game.stake > 0 ? `${game.stake.toFixed(3)} ROSE` : 'Free'}</div>
                     </div>
                   </div>
                 )
@@ -2490,7 +2600,9 @@ function App() {
             <div className="modal-tx">{modalState.tx}</div>
             <div className="modal-btns">
               <button className="btn-ghost" onClick={showHistory}>📋 Lịch Sử</button>
-              <button className="btn-primary" onClick={playAgain}>▶ Chơi Lại</button>
+              <button className="btn-primary" onClick={playAgain} disabled={rematchPending}>
+                {rematchPending ? '⏳ Đang chờ đối thủ...' : '▶ Chơi Lại'}
+              </button>
             </div>
           </div>
         </div>

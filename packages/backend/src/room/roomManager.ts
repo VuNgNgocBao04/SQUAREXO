@@ -22,6 +22,8 @@ export type Room = {
   matchStartedAt: Date;
   matchSaved: boolean;
   boardSize: { rows: number; cols: number };
+  stakeRose: number;
+  rematchRequester: PlayerSlot | null;
   players: Record<PlayerSlot, string | null>;
   socketToPlayerId: Map<string, string>;
   pendingReconnect: Map<string, PendingReconnect>;
@@ -46,7 +48,7 @@ export class RoomManager {
     return this.rooms.get(roomId);
   }
 
-  getOrCreateRoom(roomId: string, rows: number, cols: number, initialState: GameState): Room {
+  getOrCreateRoom(roomId: string, rows: number, cols: number, initialState: GameState, stakeRose = 0): Room {
     const existing = this.rooms.get(roomId);
     if (existing) {
       return existing;
@@ -63,6 +65,8 @@ export class RoomManager {
       matchStartedAt: new Date(),
       matchSaved: false,
       boardSize: { rows, cols },
+      stakeRose,
+      rematchRequester: null,
       players: { X: null, O: null },
       socketToPlayerId: new Map<string, string>(),
       pendingReconnect: new Map<string, PendingReconnect>(),

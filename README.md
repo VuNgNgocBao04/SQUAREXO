@@ -1,6 +1,6 @@
 # SQUAREXO
 
-![alt text](image.png)
+[![Watch the video](https://raw.githubusercontent.com/VuNgNgocBao04/SQUAREXO/dev/image.png)](https://raw.githubusercontent.com/VuNgNgocBao04/SQUAREXO/dev/Demo.mp4)
 
 1v1 blockchain gaming platform combining Dots & Boxes mechanics with peer-to-peer betting on Oasis Sapphire.
 
@@ -572,14 +572,6 @@ pnpm dev
 - `game-core`: unit tests cho engine.
 - `backend`: unit + integration (auth/history/socket/http).
 - `contracts`: security tests trong `SquarexoMatch.security.test.ts`.
-
-## Roadmap (thực tế, chưa có trong code hiện tại)
-
-- Matchmaking thay vì join bằng room code thủ công.
-- Spectator mode riêng (hiện có trạng thái spectator tạm trong room full).
-- Replay/move timeline từ `MatchMove` cho UI history.
-- Anti-cheat mở rộng (rate + dedupe đã có, chưa có signed action từ client).
-- Tối ưu chi phí gas và chiến lược settle khi mạng chậm.
 
 ## Known Issues
 

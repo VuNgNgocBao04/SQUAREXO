@@ -8,6 +8,8 @@ import {
   chatMessageSchema,
   joinRoomSchema,
   makeMoveSchema,
+  rematchRequestSchema,
+  rematchResponseSchema,
   resetGameSchema,
   syncStateSchema,
 } from "../contracts/schemas";
@@ -172,6 +174,18 @@ export async function saveMatchIfFinished(
       });
     }
 
+    const shouldRequireOnChainSettlement = options.blockchainService.isEnabled() && room.stakeRose > 0;
+    if (shouldRequireOnChainSettlement && !chainResult?.submitted) {
+      const reason = chainResult?.reason ?? "onchain_settlement_required";
+      if (io) {
+        io.to(roomId).emit(SocketEvents.MATCH_SETTLEMENT_FAILED, {
+          roomId,
+          reason,
+        });
+      }
+      throw new ContractError(ErrorCode.INTERNAL_ERROR, "On-chain settlement failed", { reason });
+    }
+
     if (chainResult?.submitted) {
       txHash = chainResult.txHash;
     }
@@ -185,6 +199,7 @@ export async function saveMatchIfFinished(
       totalMoves,
       scoreX: room.gameState.score.X,
       scoreO: room.gameState.score.O,
+      betAmount: room.stakeRose > 0 ? room.stakeRose * 2 : undefined,
       txHash,
       startedAt: room.matchStartedAt,
       endedAt: new Date(),
@@ -204,6 +219,35 @@ export async function saveMatchIfFinished(
   }
 }
 
+async function resetRoomForRematch(room: RoomManagerRoom): Promise<void> {
+  room.gameState = await createGameFromCore(room.boardSize.rows, room.boardSize.cols);
+  room.stateVersion += 1;
+  room.matchSaved = false;
+  room.matchStartedAt = new Date();
+  room.rematchRequester = null;
+  room.dedupe.clear();
+}
+
+function closeRoomAfterRematchDecline(io: Server, options: HandlerOptions, roomId: string): void {
+  const room = options.roomManager.getRoom(roomId);
+  if (!room) {
+    io.to(roomId).emit(SocketEvents.ROOM_CLEANED, { roomId });
+    return;
+  }
+
+  for (const socketId of [...room.socketToPlayerId.keys()]) {
+    const sock = io.of("/").sockets.get(socketId);
+    sock?.leave(roomId);
+    options.roomManager.removeSocket(socketId, { reserveForReconnect: false });
+  }
+
+  io.to(roomId).emit(SocketEvents.ROOM_CLEANED, { roomId });
+  metrics.setActiveRooms(options.roomManager.getRoomsCount());
+  metrics.setActiveSockets(io.of("/").sockets.size);
+}
+
+type RoomManagerRoom = ReturnType<RoomManager["getOrCreateRoom"]>;
+
 export function registerSocketHandlers(io: Server, options: HandlerOptions): void {
   const socketToRoom = new Map<string, string>();
 
@@ -222,6 +266,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         const payload = parsePayload(joinRoomSchema, rawPayload);
         const rows = payload.rows ?? 3;
         const cols = payload.cols ?? 3;
+        const requestedStakeRose = payload.stakeRose ?? 0;
         const playerId = getSocketUser(socket).userId;
 
         const existingRoomId = socketToRoom.get(socket.id);
@@ -233,7 +278,13 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         const existingRoom = options.roomManager.getRoom(payload.roomId);
         const room = existingRoom
           ? existingRoom
-          : options.roomManager.getOrCreateRoom(payload.roomId, rows, cols, await createGameFromCore(rows, cols));
+          : options.roomManager.getOrCreateRoom(
+            payload.roomId,
+            rows,
+            cols,
+            await createGameFromCore(rows, cols),
+            requestedStakeRose,
+          );
         options.roomManager.cleanupExpiredReconnect(room);
 
         if (
@@ -247,6 +298,17 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
               cols: payload.cols,
             },
           });
+        }
+
+        if (payload.stakeRose !== undefined && Math.abs(payload.stakeRose - room.stakeRose) > 1e-9) {
+          throw new ContractError(
+            ErrorCode.VALIDATION_ERROR,
+            "Requested stake does not match room stake",
+            {
+              expectedStakeRose: room.stakeRose,
+              requestedStakeRose: payload.stakeRose,
+            },
+          );
         }
 
         const hasActiveSameIdentity = [...room.socketToPlayerId.entries()].some(
@@ -265,6 +327,9 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
         socket.join(room.roomId);
 
         const roomInfo = options.roomManager.getPublicRoomInfo(room, assignedPlayer, options.publicBaseUrl);
+        if (room.players.X && room.players.O) {
+          room.rematchRequester = null;
+        }
         socket.emit(SocketEvents.ROOM_INFO, roomInfo);
         emitSnapshot(io, room.roomId, room.gameState);
         socket.to(room.roomId).emit(SocketEvents.PLAYER_JOINED, roomInfo);
@@ -379,6 +444,7 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           room.stateVersion += 1;
           room.matchSaved = false;
           room.matchStartedAt = new Date();
+          room.rematchRequester = null;
           emitSnapshot(io, payload.roomId, room.gameState);
         };
 
@@ -445,6 +511,95 @@ export function registerSocketHandlers(io: Server, options: HandlerOptions): voi
           message: payload.message,
           sentAt: Date.now(),
         });
+      } catch (error) {
+        emitError(socket, error);
+      }
+    });
+
+    socket.on(SocketEvents.REMATCH_REQUEST, async (rawPayload: unknown) => {
+      try {
+        const payload = parsePayload(rematchRequestSchema, rawPayload);
+        const room = options.roomManager.getRoom(payload.roomId);
+        if (!room) {
+          throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
+            roomId: payload.roomId,
+          });
+        }
+
+        const requester = options.roomManager.getPlayerInRoom(room, socket.id);
+        if (!requester) {
+          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Only players can request rematch");
+        }
+
+        if (!room.players.X || !room.players.O) {
+          throw new ContractError(ErrorCode.VALIDATION_ERROR, "Room must have two players for rematch");
+        }
+
+        room.rematchRequester = requester;
+        const requesterId = room.socketToPlayerId.get(socket.id) ?? requester;
+        const opponent: Player = requester === "X" ? "O" : "X";
+        const opponentSocketId = [...room.socketToPlayerId.entries()].find(
+          ([trackedSocketId]) => options.roomManager.getPlayerInRoom(room, trackedSocketId) === opponent,
+        )?.[0];
+
+        io.to(payload.roomId).emit(SocketEvents.REMATCH_PROMPT, {
+          roomId: payload.roomId,
+          from: requester,
+          requesterId,
+        });
+
+        if (opponentSocketId) {
+          io.to(opponentSocketId).emit(SocketEvents.REMATCH_PROMPT, {
+            roomId: payload.roomId,
+            from: requester,
+            requesterId,
+            target: "opponent",
+          });
+        }
+      } catch (error) {
+        emitError(socket, error);
+      }
+    });
+
+    socket.on(SocketEvents.REMATCH_RESPONSE, async (rawPayload: unknown) => {
+      try {
+        const payload = parsePayload(rematchResponseSchema, rawPayload);
+        const room = options.roomManager.getRoom(payload.roomId);
+        if (!room) {
+          throw new ContractError(ErrorCode.ROOM_NOT_FOUND, "Room not found", {
+            roomId: payload.roomId,
+          });
+        }
+
+        const responder = options.roomManager.getPlayerInRoom(room, socket.id);
+        if (!responder) {
+          throw new ContractError(ErrorCode.NOT_IN_ROOM, "Only players can respond rematch");
+        }
+
+        const requester = room.rematchRequester;
+        if (!requester) {
+          throw new ContractError(ErrorCode.VALIDATION_ERROR, "No rematch request is pending");
+        }
+
+        if (requester === responder) {
+          throw new ContractError(ErrorCode.VALIDATION_ERROR, "Requester cannot self-approve rematch");
+        }
+
+        if (!payload.accept) {
+          room.rematchRequester = null;
+          io.to(payload.roomId).emit(SocketEvents.REMATCH_DECLINED, {
+            roomId: payload.roomId,
+            by: responder,
+          });
+          closeRoomAfterRematchDecline(io, options, payload.roomId);
+          return;
+        }
+
+        await resetRoomForRematch(room);
+        io.to(payload.roomId).emit(SocketEvents.REMATCH_STARTED, {
+          roomId: payload.roomId,
+        });
+        emitSnapshot(io, payload.roomId, room.gameState);
       } catch (error) {
         emitError(socket, error);
       }

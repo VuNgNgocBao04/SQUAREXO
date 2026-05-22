@@ -2589,6 +2589,13 @@ body {
   margin-top: var(--space-1);
 }
 
+.room-contract-status {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .room-divider-row {
   display: flex;
   align-items: center;
