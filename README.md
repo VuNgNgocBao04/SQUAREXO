@@ -455,21 +455,17 @@ docs: update deployment checklist
 ## License
 
 MIT. See [LICENSE](./LICENSE).
-docker-compose.yml
-```
 
-## Luồng hoạt động thực tế
+## Runtime Flow
 
-1. User đăng ký/đăng nhập qua `/api/auth/*` để lấy JWT.  
-2. User link ví bằng `/api/auth/wallet`.  
-3. Tạo phòng online:
-   - Frontend có thể gọi `createMatch` on-chain (nếu có `VITE_CONTRACT_ADDRESS`),
-   - rồi `join_room` qua Socket.IO.
-4. Trong trận online, client gửi `make_move`; backend validate turn + dedupe + cập nhật state authoritative.
-5. Khi board full, backend `saveResult` vào DB và thử `submitResult` on-chain.
-6. Frontend nhận `match_settled`, hiển thị tx hash; winner tự `claimReward` từ contract.
-
-## Smart Contract
+1. Users register/login via `/api/auth/*` to obtain JWTs.
+2. Users link wallets via `/api/auth/wallet`.
+3. To create an online room:
+  - The frontend may call `createMatch` on-chain when `VITE_CONTRACT_ADDRESS` is set,
+  - Then join the room via `join_room` over Socket.IO.
+4. During an online match, clients emit `make_move`; the backend validates turn order, deduplicates actions, and updates authoritative state.
+5. When the board is full, the backend saves the result to the database and attempts to `submitResult` on-chain.
+6. The frontend receives `match_settled` (including the tx hash); winners can `claimReward` from the contract.
 
 - File: `packages/contracts/contracts/SquarexoMatch.sol`
 - Chức năng chính:
@@ -481,58 +477,37 @@ docker-compose.yml
   - `forceDrawOnTimeout(roomId)`
 - Events: `MatchCreated`, `MatchJoined`, `ResultSubmitted`, `RewardClaimed`, `MatchCancelled`, `DrawForcedByTimeout`
 
-## Cài đặt local
 
-Chi tiết đầy đủ: [`docs/setup.md`](docs/setup.md)
-
-Quick start tối thiểu:
-
-```bash
-git clone https://github.com/VuNgNgocBao04/SQUAREXO.git
-cd SQUAREXO
-corepack enable
-docker compose up -d postgres
-pnpm install --fix-lockfile
-
-cp packages/backend/.env.example packages/backend/.env
-cp packages/frontend/.env.example packages/frontend/.env
-cp packages/contracts/.env.example packages/contracts/.env
-
-pnpm --filter backend prisma:generate
-pnpm --filter backend prisma:push
-pnpm dev
-```
 
 ## Environment Variables
 
 | Key | Description |
 |---|---|
-| `PORT` | Port backend (mặc định 3000) |
-| `CORS_ORIGIN` | Origin cho HTTP + Socket CORS |
-| `DATABASE_URL` | Chuỗi kết nối PostgreSQL cho Prisma |
-| `JWT_SECRET` | Secret ký access/refresh token (>=32 ký tự) |
-| `JWT_EXPIRES_IN` | TTL access token |
-| `REFRESH_TOKEN_EXPIRES_IN` | TTL refresh token |
-| `OASIS_RPC_URL` | RPC chính cho backend blockchain submit |
-| `OASIS_RPC_FALLBACK_URLS` | RPC fallback (comma-separated) |
-| `OASIS_EXPECTED_CHAIN_ID` | Chain ID mong đợi (testnet: 23295) |
-| `BACKEND_SIGNER_PRIVATE_KEY` | Private key signer backend (server only) |
-| `CONTRACT_ADDRESS` | Address `SquarexoMatch` |
-| `BLOCKCHAIN_TX_TIMEOUT_MS` | Timeout chờ tx confirm |
-| `HISTORY_SYNC_API_KEY` | Key bảo vệ `/api/history/sync` (optional) |
-| `VITE_BACKEND_URL` | URL backend cho frontend |
-| `VITE_OASIS_NETWORK` | `testnet` hoặc `mainnet` |
-| `VITE_OASIS_RPC_URL` | RPC cho wallet/network config phía frontend |
-| `VITE_CONTRACT_ADDRESS` | Address contract để frontend gọi stake/reward |
-| `DEPLOYER_PRIVATE_KEY` | Key deploy contract (chỉ package contracts) |
-| `BACKEND_SIGNER_ADDRESS` | Address signer được cấp role on-chain |
+| `PORT` | Backend port (default: 3000) |
+| `CORS_ORIGIN` | Allowed origin for HTTP and WebSocket CORS |
+| `DATABASE_URL` | PostgreSQL connection string used by Prisma |
+| `JWT_SECRET` | Secret used to sign access/refresh tokens (>=32 chars) |
+| `JWT_EXPIRES_IN` | Access token TTL (e.g. `15m`, `1h`) |
+| `REFRESH_TOKEN_EXPIRES_IN` | Refresh token TTL |
+| `OASIS_RPC_URL` | Primary Oasis Sapphire RPC endpoint for backend submits |
+| `OASIS_RPC_FALLBACK_URLS` | Comma-separated RPC fallback endpoints |
+| `OASIS_EXPECTED_CHAIN_ID` | Expected chain ID (testnet: 23295) |
+| `BACKEND_SIGNER_PRIVATE_KEY` | Backend signer private key (server only) |
+| `BACKEND_SIGNER_ADDRESS` | Address of the backend signer (role granted on-chain) |
+| `CONTRACT_ADDRESS` | Deployed `SquarexoMatch` contract address |
+| `VITE_BACKEND_URL` | Backend URL used by the frontend |
+| `VITE_OASIS_RPC_URL` | RPC endpoint used by the frontend wallet/network config |
+| `VITE_CONTRACT_ADDRESS` | Contract address used by the frontend for staking/claims |
+| `DEPLOYER_PRIVATE_KEY` | Private key for contract deployment (contracts package only) |
+| `BLOCKCHAIN_TX_TIMEOUT_MS` | Timeout for waiting for tx confirmations (ms) |
+| `HISTORY_SYNC_API_KEY` | Optional API key protecting `/api/history/sync` |
 
 ## Scripts
 
 ### Root
-- `pnpm dev`: chạy dev song song các package có script `dev`
-- `pnpm build`: build toàn workspace
-- `pnpm test`: chạy test toàn workspace
+- `pnpm dev`: run all packages that expose a `dev` script in parallel
+- `pnpm build`: build the entire workspace
+- `pnpm test`: run tests across all packages
 
 ### Backend
 - `pnpm --filter backend dev`
@@ -575,12 +550,12 @@ pnpm dev
 
 ## Known Issues
 
-1. `packages/backend/src/socket/handler.ts` đang có duplicate export `saveMatchIfFinished` → backend build lỗi.  
-2. `packages/frontend/src/components/GameCanvas.tsx` và `gameCanvas.tsx` trùng tên khác casing → frontend build lỗi trên môi trường case-sensitive.  
-3. `pnpm build` ở root phụ thuộc compile contract; trong môi trường không truy cập `binaries.soliditylang.org` sẽ fail tải compiler.  
-4. `pnpm --filter backend test` hiện fail một loạt integration auth do `router.put(..., authMiddleware || ...)` nhận `undefined` middleware trong test setup.
+1. `packages/backend/src/socket/handler.ts` contains a duplicate export `saveMatchIfFinished`, causing backend build failures.
+2. `packages/frontend/src/components/GameCanvas.tsx` and `gameCanvas.tsx` differ only by case, causing frontend build failures on case-sensitive filesystems.
+3. Root `pnpm build` depends on downloading the Solidity compiler; environments without access to `binaries.soliditylang.org` may fail to compile contracts.
+4. `pnpm --filter backend test` currently fails several integration tests for auth because `router.put(..., authMiddleware || ...)` receives `undefined` middleware in the test setup.
 
-## Tài liệu thêm
+## Additional Documentation
 
 - [docs/setup.md](docs/setup.md)
 - [docs/architecture.md](docs/architecture.md)
@@ -588,4 +563,4 @@ pnpm dev
 
 ## License
 
-Repository đã có `LICENSE` theo MIT.
+MIT. See [LICENSE](./LICENSE).
