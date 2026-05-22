@@ -532,10 +532,10 @@ function App() {
     matchCountdownValueRef.current = remaining
     setRoomCountdown(remaining)
     setRoomChat((prev) => {
-      if (prev.some((item) => item.msg.includes('Bắt đầu sau 10 giây'))) {
+      if (prev.some((item) => item.msg.includes('Starts in 10 seconds'))) {
         return prev
       }
-      return [...prev, { id: Date.now(), user: 'System', msg: 'Đủ người chơi. Bắt đầu sau 10 giây...' }]
+      return [...prev, { id: Date.now(), user: 'System', msg: 'Enough players. Starting in 10 seconds...' }]
     })
 
     countdownRef.current = window.setInterval(() => {
@@ -557,9 +557,9 @@ function App() {
   const getChatAuthor = useCallback((playerId: string) => {
     const currentIdentityId = authUser?.id ?? getStoredAuthUser()?.id ?? clientPlayerIdRef.current
     if (playerId === currentIdentityId) {
-      return 'Bạn'
+      return 'You'
     }
-    return 'Đối thủ'
+    return 'Opponent'
   }, [authUser])
 
   const edgeToLine = useCallback((edge: CoreEdge): Line => {
@@ -793,7 +793,7 @@ function App() {
       setModalState((prev) => ({
         ...prev,
         sub: 'The backend successfully wrote the result to Oasis Sapphire.',
-        tx: payload.txHash ? `Tx: ${payload.txHash}` : 'Tx: Đã ghi nhận on-chain',
+        tx: payload.txHash ? `Tx: ${payload.txHash}` : 'Tx: Recorded on-chain',
       }))
 
       if (payload.txHash) {
@@ -922,7 +922,7 @@ function App() {
 
         socket.emit('join_room', payload)
       } catch {
-        showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
+        showToast('Could not connect to the realtime server. Check the backend and try again.')
       }
     },
     [connectOnlineSocket, setRoomCodeSafe, showToast, stopMatchCountdown, updateRoomPlayers],
@@ -1540,7 +1540,7 @@ function App() {
         message,
       })
     } else {
-      setRoomChat((prev) => [...prev, { id: Date.now(), user: 'Bạn', msg: message }])
+      setRoomChat((prev) => [...prev, { id: Date.now(), user: 'You', msg: message }])
     }
 
     setChatMsg('')
@@ -1553,7 +1553,7 @@ function App() {
         return
       }
       if (!window.ethereum) {
-        showToast('Không tìm thấy MetaMask/WalletConnect provider trong trình duyệt')
+        showToast('No MetaMask or WalletConnect provider found in the browser')
         return
       }
 
@@ -1591,7 +1591,7 @@ function App() {
         }
 
         if (network.chainId !== OASIS_CHAIN_ID) {
-          throw new Error(`Network chưa được chuyển sang ${OASIS_CHAIN_NAME}`)
+          throw new Error(`Network was not switched to ${OASIS_CHAIN_NAME}`)
         }
 
         await window.ethereum.request({ method: 'eth_requestAccounts' })
@@ -1633,9 +1633,9 @@ function App() {
         setWalletAddress(formatWalletLabel(address))
         setWalletBalance(ethers.formatEther(balanceWei))
         await checkContractConfiguration()
-        showToast(`Kết nối ví thành công trên ${OASIS_CHAIN_NAME}`)
+        showToast(`Wallet connected successfully on ${OASIS_CHAIN_NAME}`)
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Không thể kết nối ví'
+        const message = error instanceof Error ? error.message : 'Unable to connect wallet'
         showToast(message)
       } finally {
         setWalletPending(false)
@@ -1655,7 +1655,7 @@ function App() {
       if (!Array.isArray(accounts) || accounts.length === 0 || typeof accounts[0] !== 'string') {
         setWalletConnected(false)
         setWalletAccount(null)
-        setWalletAddress('Chưa kết nối')
+        setWalletAddress('Not connected')
         setWalletBalance('0.0000')
         return
       }
@@ -2444,7 +2444,7 @@ function App() {
               <div className="chat-messages">
                 {roomChat.map((msg) => (
                   <div key={msg.id} className="chat-msg">
-                    <span className={`user ${msg.user === 'System' ? 'sys' : msg.user === 'Bạn' ? 'you' : 'opp'}`}>
+                    <span className={`user ${msg.user === 'System' ? 'sys' : msg.user === 'You' ? 'you' : 'opp'}`}>
                       {msg.user}:
                     </span>
                     {msg.msg}
@@ -2494,7 +2494,7 @@ function App() {
               <span className="t-sep">|</span>
               <div className="ticker-item"><span className="t-lbl">Moves</span><span className="t-val green">{totalMoves}</span></div>
               <span className="t-sep">|</span>
-              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Chưa sẵn sàng'}</span></div>
+              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Not ready'}</span></div>
             </div>
 
             {isOnlineMatch && chainStatus === 'settled' && (
@@ -2506,7 +2506,7 @@ function App() {
             )}
 
             <div className="turn-pill">
-              Lượt:{' '}
+              Turn:{' '}
               <span className={currentPlayer === 1 ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>
                 {currentPlayer === 1 ? 'X' : gameMode === 'ai' ? 'AI (O) 🤖' : 'O'}
               </span>{' '}
@@ -2539,7 +2539,7 @@ function App() {
               <div>
                 <div className="h-title">⬡ On-chain History</div>
                 <div className="history-chain-sub">
-                  Oasis Sapphire Testnet · Smart Contract {contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa sẵn sàng'}
+                  Oasis Sapphire Testnet · Smart Contract {contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'not ready'}
                 </div>
               </div>
               <button className="btn-ghost" onClick={goHome}>← Back</button>

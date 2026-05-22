@@ -159,7 +159,7 @@ In `packages/frontend`, create a `.env` file:
 cd ../frontend
 ```
 
-Tạo file `.env`:
+Create a `.env` file:
 ```env
 VITE_BACKEND_URL=http://localhost:3000
 VITE_OASIS_NETWORK=testnet
@@ -233,174 +233,174 @@ Open the browser at `http://localhost:5173`
 **Expected:**
 - MetaMask shows a connection prompt.
 - After confirming, the app displays:
-  - Address: `0xABC1...XYZ9` (ví A).
+  - Address: `0xABC1...XYZ9` (wallet A).
   - Balance: `X.XXXX ROSE`.
   - The button changes to: `✓ Connected`.
 
 ---
 
-### **BƯỚC 5.3: Tạo Phòng và Stake - Browser 1**
+### **STEP 5.3: Create a Room and Stake - Browser 1**
 
-**Thao tác:**
-1. Chọn chế độ: **PVP Online**.
-2. Nhập Stake (ROSE): `0.1` (hoặc số tiền thích hợp).
-3. Bấm "Tạo Phòng Cược".
+**Actions:**
+1. Choose the mode: **PVP Online**.
+2. Enter Stake (ROSE): `0.1` (or a suitable amount).
+3. Click "Create Betting Room".
 
-**Kỳ vọng:**
-- MetaMask popup ký giao dịch createMatch.
-- Sau khi confirm:
-  - Nhân được mã phòng, ví dụ: `ABCD12`.
-  - Chuyển sang màn "WAITING".
-  - Chat hiển thị: "Phòng ABCD12 đã được tạo. Chia sẻ mã để đối thủ tham gia."
-  - Trạng thái: "1/2 người đã vào phòng".
-
----
-
-### **BƯỚC 5.4: Chuẩn bị Browser 2 (Ví Thứ Hai)**
-
-**Thao tác:**
-1. Mở **browser mới** hoặc **profile mới** của MetaMask (với ví B khác).
-2. Vào cùng URL: `http://localhost:5173`.
-3. Đăng nhập với username khác, ví dụ: `player2` (password: `password123`).
-
-**Kỳ vọng:**
-- Đăng nhập thành công trên browser 2.
+**Expected:**
+- MetaMask popup signs the `createMatch` transaction.
+- After confirmation:
+  - Receive a room code, for example: `ABCD12`.
+  - Switch to the "WAITING" screen.
+  - Chat shows: "Room ABCD12 has been created. Share the code so the opponent can join."
+  - Status: "1/2 players in the room".
 
 ---
 
-### **BƯỚC 5.5: Kết nối Ví MetaMask - Browser 2**
+### **STEP 5.4: Prepare Browser 2 (Second Wallet)**
 
-**Thao tác:**
+**Actions:**
+1. Open a **new browser** or a **new MetaMask profile** (with a different wallet B).
+2. Go to the same URL: `http://localhost:5173`.
+3. Sign in with a different username, for example: `player2` (password: `password123`).
+
+**Expected:**
+- Sign in succeeds on browser 2.
+
+---
+
+### **STEP 5.5: Connect MetaMask Wallet - Browser 2**
+
+**Actions:**
 1. Trên browser 2, mở MetaMask.
-2. Chọn ví B (ví khác, cũng có ROSE balance).
-3. Kết nối với app.
+2. Select wallet B (a different wallet with ROSE balance).
+3. Connect it to the app.
 
-**Kỳ vọng:**
-- Ví B hiển thị trên browser 2.
-
----
-
-### **BƯỚC 5.6: Join Phòng - Browser 2**
-
-**Thao tác:**
-1. Chọn: **PVP Online > Join Phòng**.
-2. Nhập mã phòng: `ABCD12` (mã từ bước 5.3).
-3. Bấm "Tham Gia Phòng".
-
-**Kỳ vọng:**
-- MetaMask popup yêu cầu ký joinMatch.
-- Sau khi confirm:
-  - Ví B stake được lock.
-  - Chuyển sang màn "WAITING".
-  - Cả 2 browser đều hiển thị: "2/2 người đã vào phòng".
-  - **Game bắt đầu tự động sau 3 giây** (countdown).
-  - Cả 2 phía đều thấy board game 3x3 và lượt chơi bắt đầu.
+**Expected:**
+- Wallet B appears on browser 2.
 
 ---
 
-### **BƯỚC 5.7: Chơi Ván PvP**
+### **STEP 5.6: Join the Room - Browser 2**
 
-**Thao tác:**
-1. **Browser 1 (Player X)**: Bấm vào đường ngang hoặc dọc trên board để đánh.
-   - Chỉ có thể đánh đường chưa được chiếm.
-   - Sau khi đánh, board sẽ **sync tự động** sang browser 2 trong < 1 giây.
+**Actions:**
+1. Select: **PVP Online > Join Room**.
+2. Enter the room code: `ABCD12` (code from step 5.3).
+3. Click "Join Room".
 
-2. **Browser 2 (Player O)**: Đợi nước của X hoàn tất, rồi đánh nước O.
-   - Nếu bạn bấm khi chưa đến lượt, app sẽ báo lỗi: "Chưa tới lượt của bạn".
-
-3. **Lặp lại** cho đến khi một người được 5 ô (trên board 3x3, kích thước 3x3).
-
-**Kỳ vọng:**
-- Mỗi nước đi phải **nhận realtime từ server**.
-- Chat có thể gửi tin nhắn để kiểm tra realtime (tùy chọn).
-- Không có bất đồng bộ giữa 2 browser.
-
----
-
-### **BƯỚC 5.8: Kết Thúc Trận**
-
-**Thao tác:**
-- Tiếp tục chơi cho đến khi có người **chiếm 5 ô hoặc hết nước**.
-
-**Kỳ vọng:**
-- Game tự kết thúc.
-- Popup modal hiển thị:
-  - Nếu Player X thắng: "X THẮNG!"
-  - Nếu hòa: "HÒA!"
-  - Kèm theo: "Kết quả đang được ghi lên blockchain..."
-  - Hiển thị TxHash (nếu enable blockchain).
-- **Lúc này, backend tự động:**
-  - Submit kết quả lên contract `submitResult()`.
-  - Lưu match vào database.
-  - Phát event `match_settled` về cả 2 client.
+**Expected:**
+- MetaMask popup requests a `joinMatch` signature.
+- After confirmation:
+  - Wallet B stake is locked.
+  - Switch to the "WAITING" screen.
+  - Both browsers show: "2/2 players in the room".
+  - **The game starts automatically after 3 seconds** (countdown).
+  - Both sides see the 3x3 board and the match begins.
 
 ---
 
-### **BƯỚC 5.9: Claim Reward (Nếu Enable Blockchain)**
+### **STEP 5.7: Play the PvP Match**
 
-**Thao tác:**
-1. Chờ modal biến mất (lúc backend đã submit xong).
-2. Bấm nút "Claim Reward".
+**Actions:**
+1. **Browser 1 (Player X)**: Click a horizontal or vertical line on the board to make a move.
+  - You can only click lines that are still free.
+  - After a move, the board **syncs automatically** to browser 2 in less than 1 second.
 
-**Kỳ vọng:**
-- MetaMask popup ký claimReward.
-- Sau khi confirm:
-  - Toast: "Claim reward thành công: 0xABC123..."
-  - Ví thắng nhận được toàn bộ pot (stake của cả 2).
-  - Ví thua mất stake (đã lock ở createMatch/joinMatch).
+2. **Browser 2 (Player O)**: Wait for X to finish, then make the O move.
+  - If you click before your turn, the app shows: "It is not your turn yet".
+
+3. **Repeat** until one player has 5 boxes (on the 3x3 board, size 3x3).
+
+**Expected:**
+- Each move must be **received in real time from the server**.
+- Chat can be used to test realtime messaging (optional).
+- There is no desynchronization between the 2 browsers.
 
 ---
 
-### **BƯỚC 5.10: Kiểm Tra Lịch Sử**
+### **STEP 5.8: End the Match**
 
-**Thao tác:**
-1. Chuyển sang tab "HISTORY" trên browser 1 (hoặc browser 2).
-2. Connect wallet nếu chưa kết nối.
+**Actions:**
+- Continue playing until someone **captures 5 boxes or there are no moves left**.
 
-**Kỳ vọng:**
-- Trận vừa chơi xuất hiện trong danh sách.
-- Hiển thị:
+**Expected:**
+- The game ends automatically.
+- The modal popup shows:
+  - If Player X wins: "X WINS!"
+  - If it is a draw: "DRAW!"
+  - Also: "Writing the result to the blockchain..."
+  - Shows the TxHash (if blockchain is enabled).
+- **At this point, the backend automatically:**
+  - Submits the result to the `submitResult()` contract method.
+  - Saves the match to the database.
+  - Emits the `match_settled` event to both clients.
+
+---
+
+### **STEP 5.9: Claim Reward (If Blockchain Is Enabled)**
+
+**Actions:**
+1. Wait for the modal to disappear (after the backend finishes submitting).
+2. Click the "Claim Reward" button.
+
+**Expected:**
+- MetaMask popup signs `claimReward`.
+- After confirmation:
+  - Toast: "Claim reward succeeded: 0xABC123..."
+  - The winning wallet receives the full pot (both stakes).
+  - The losing wallet loses its stake (locked in `createMatch` / `joinMatch`).
+
+---
+
+### **STEP 5.10: Check History**
+
+**Actions:**
+1. Switch to the "HISTORY" tab on browser 1 (or browser 2).
+2. Connect the wallet if it is not connected yet.
+
+**Expected:**
+- The match you just played appears in the list.
+- Shows:
   - Grid size: 3x3
   - Mode: PVP
   - Scores: X vs O
-  - Winner: Player X (hoặc Draw)
+  - Winner: Player X (or Draw)
   - Stake: 0.1 ROSE
   - Tx: 0xABC123...
 
 ---
 
-### **BƯỚC 5.11: Refresh Browser để Kiểm Tra Persistence**
+### **STEP 5.11: Refresh the Browser to Check Persistence**
 
-**Thao tác:**
-1. Bấm `F5` để refresh browser 1.
-2. Đăng nhập lại.
-3. Kết nối ví lại.
-4. Vào tab HISTORY.
+**Actions:**
+1. Press `F5` to refresh browser 1.
+2. Sign in again.
+3. Reconnect the wallet.
+4. Open the HISTORY tab.
 
-**Kỳ vọng:**
-- Lịch sử **vẫn còn** (từ database, không phải localStorage lỏng lẻo).
-- Chứng minh dữ liệu đã lưu trữ bền vững.
-
----
-
-## **PHẦN 6: DEMO CHẾ ĐỘ AI (TUỲ CHỌN)**
-
-**Thao tác:**
-1. Từ màn HOME, chọn "PvP vs AI".
-2. Chọn kích thước board (3x3, 4x4, 5x5).
-3. Chọn stake (nếu enable blockchain) hoặc bỏ qua.
-4. Bấm "Bắt Đầu Ván Mới".
-
-**Kỳ vọng:**
-- Board hiển thị, player X (bạn) đi trước.
-- Khi bạn đánh xong, AI tự động đánh (trong < 1 giây).
-- Game chạy mượt, logic game-core hoạt động.
+**Expected:**
+- The history is still there (from the database, not fragile localStorage).
+- This proves the data was stored persistently.
 
 ---
 
-## **PHẦN 7: KIỂM TRA BACKEND LOGS**
+## **SECTION 6: AI MODE DEMO (OPTIONAL)**
 
-Trong terminal chạy backend (`pnpm dev`), bạn sẽ thấy logs:
+**Actions:**
+1. From the HOME screen, choose "PvP vs AI".
+2. Select a board size (3x3, 4x4, 5x5).
+3. Select a stake (if blockchain is enabled) or skip it.
+4. Click "Start New Match".
+
+**Expected:**
+- The board appears, and player X (you) goes first.
+- After your move, the AI automatically responds (in less than 1 second).
+- The game runs smoothly and the `game-core` logic works.
+
+---
+
+## **SECTION 7: CHECK BACKEND LOGS**
+
+In the terminal running the backend (`pnpm dev`), you should see logs like:
 
 ```
 [INFO] socket_connected { socketId: 'abc123' }
@@ -412,112 +412,112 @@ Trong terminal chạy backend (`pnpm dev`), bạn sẽ thấy logs:
 
 ---
 
-## **PHẦN 8: KIỂM TRA DATABASE TRỰC TIẾP (TUỲ CHỌN)**
+## **SECTION 8: CHECK THE DATABASE DIRECTLY (OPTIONAL)**
 
-Nếu muốn xem dữ liệu trong PostgreSQL:
+If you want to inspect the data in PostgreSQL:
 
-### Kết nối PostgreSQL từ terminal
+### Connect to PostgreSQL from the terminal
 ```bash
 psql -U squarexo -h localhost -p 55432 -d squarexo
 ```
 
-### Xem danh sách match
+### View the match list
 ```sql
 SELECT id, "roomId", "playerXId", "playerOId", winner, "scoreX", "scoreO", "txHash" FROM "Match" ORDER BY "createdAt" DESC LIMIT 10;
 ```
 
-### Xem danh sách user
+### View the user list
 ```sql
 SELECT id, username, email, "walletAddress", elo FROM "User" LIMIT 10;
 ```
 
-### Thoát
+### Exit
 ```sql
 \q
 ```
 
 ---
 
-## **PHẦN 9: TROUBLESHOOT NHANH**
+## **SECTION 9: QUICK TROUBLESHOOTING**
 
-### Backend lỗi `P1001 Can't reach database`
+### Backend error `P1001 Can't reach database`
 ```bash
-# Kiểm tra container
+# Check containers
 docker compose ps
 
-# Nếu chưa chạy
+# If it is not running yet
 docker compose up -d postgres
 
-# Nếu port 55432 bị chiếm
+# If port 55432 is already in use
 netstat -an | grep 55432  # Windows: netstat -ano | findstr :55432
 ```
 
-### Frontend không kết nối backend
+### Frontend cannot connect to the backend
 ```bash
-# Kiểm tra backend running
+# Check that the backend is running
 curl http://localhost:3000/health
 
-# Nếu 503, backend chưa sẵn sàng hoặc DATABASE_URL sai
+# If you get 503, the backend is not ready or `DATABASE_URL` is wrong
 ```
 
-### MetaMask không switch chain
-1. Kiểm tra `VITE_OASIS_NETWORK` = `testnet` (không phải `mainnet`).
-2. Kiểm tra chain ID: testnet = `0x5aff`, mainnet = `0x5afe`.
-3. Kiểm tra RPC URL có hợp lệ.
+### MetaMask does not switch chains
+1. Check that `VITE_OASIS_NETWORK` = `testnet` (not `mainnet`).
+2. Check the chain ID: testnet = `0x5aff`, mainnet = `0x5afe`.
+3. Check that the RPC URL is valid.
 
-### Transaction pending lâu
-1. Kiểm tra ROSE balance signer/deployer đủ không.
-2. Kiểm tra RPC chính có bị nghẽn, fallback có hoạt động.
-3. Xem backend logs để tìm `blockchain_submit_result_slow` hoặc `blockchain_submit_result_failed`.
+### Transaction pending for too long
+1. Check whether the signer/deployer has enough ROSE balance.
+2. Check whether the primary RPC is congested and the fallback is working.
+3. Check backend logs for `blockchain_submit_result_slow` or `blockchain_submit_result_failed`.
 
 ---
 
-## **PHẦN 10: KẾT THÚC DEMO**
+## **SECTION 10: END THE DEMO**
 
-Khi hoàn tất:
+When you are done:
 
-1. **Dừng Frontend**:
+1. **Stop the Frontend**:
    ```bash
-   # Ở terminal chạy frontend, bấm Ctrl+C
+  # In the frontend terminal, press Ctrl+C
    ```
 
-2. **Dừng Backend**:
+2. **Stop the Backend**:
    ```bash
-   # Ở terminal chạy backend, bấm Ctrl+C
+  # In the backend terminal, press Ctrl+C
    ```
 
-3. **Dừng Database** (tuỳ chọn):
+3. **Stop the Database** (optional):
    ```bash
-   # Từ thư mục gốc
+  # From the repository root
    docker compose down
 
-   # Nếu muốn xóa volume (DB data):
+  # If you want to delete the volume (database data):
    docker compose down -v
    ```
 
 ---
 
-## **CHECKLIST DEMO THÀNH CÔNG**
+## **SUCCESS CHECKLIST**
 
-✅ Database PostgreSQL khởi động, schema đồng bộ
+✅ PostgreSQL database starts and the schema is in sync
 ✅ Backend chạy trên http://localhost:3000
 ✅ Frontend chạy trên http://localhost:5173
-✅ 2 ví MetaMask kết nối thành công
-✅ Browser 1: Tạo phòng, stake thành công
-✅ Browser 2: Join phòng, stake thành công
-✅ 2 browser sync realtime cùng board game
-✅ Kết thúc trận, backend submit kết quả lên chain
-✅ Người thắng claim reward được
-✅ Lịch sử trận hiển thị chính xác
-✅ Refresh page vẫn có dữ liệu lịch sử (persistent)
+✅ Two MetaMask wallets connect successfully
+✅ Browser 1: room creation and staking succeed
+✅ Browser 2: room join and staking succeed
+✅ Both browsers sync the same board in real time
+✅ At the end of the match, the backend submits the result on-chain
+✅ The winner can claim the reward
+✅ Match history displays correctly
+✅ Refreshing the page still keeps the history data (persistent)
 
-Nếu tất cả ✅, **DEMO PASS!**
+If everything is ✅, **DEMO PASS!**
 
 ---
 
-## **NOTES THÊM**
+## **ADDITIONAL NOTES**
 
-- **Auth hiện chỉ là mock**: Frontend auth vẫn dùng localStorage. Nếu muốn test auth thực, cần cập nhật frontend để gọi backend API auth.
-- **Blockchain tuỳ chọn**: Nếu không deploy contract, bỏ qua PHẦN 2 và blockchain sẽ không hoạt động, nhưng realtime + database vẫn work.
-- **Chat realtime**: Bạn có thể test bằng cách gửi tin nhắn giữa 2 browser trong phòng chờ hoặc trong ván đấu.
-- **History sync**: Khi connect wallet lần đầu, app sẽ đồng bộ lịch sử pending từ localStorage và pull history từ server về.
+- **Auth is currently mock-only**: Frontend auth still uses localStorage. If you want to test real auth, update the frontend to call the backend auth API.
+- **Blockchain is optional**: If you do not deploy the contract, skip Section 2 and blockchain will not work, but realtime and the database will still work.
+- **Realtime chat**: You can test it by sending messages between the 2 browsers in the waiting room or during a match.
+- **History sync**: When you connect the wallet for the first time, the app syncs pending history from localStorage and pulls history from the server.

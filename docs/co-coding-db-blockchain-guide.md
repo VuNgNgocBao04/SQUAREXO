@@ -98,7 +98,7 @@ VITE_CONTRACT_ADDRESS=0x<deployed_contract_address>
 
 ### 5.2 Wallet behavior
 - App tự `wallet_switchEthereumChain`.
-- Nếu chưa có network, app tự `wallet_addEthereumChain`.
+- If the network is missing, the app automatically calls `wallet_addEthereumChain`.
 - Theo dõi `accountsChanged` và `chainChanged` để refresh state.
 
 ## 6. Deploy the contract to Oasis
