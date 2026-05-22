@@ -1,36 +1,59 @@
-import express, { Express } from "express";
-import { Server } from "socket.io";
-import { createServer } from "http";
-import { registerSocketHandlers } from "./socket/handler";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { config as loadDotenv } from "dotenv";
+import { loadEnv } from "./config/env";
+import { logger } from "./config/logger";
+import { closeDatabaseConnection, initDatabaseConnection } from "./db/prisma";
+import { startBackendServer } from "./server";
 
-const app: Express = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-  },
-});
+const envCandidates = [
+  resolve(process.cwd(), ".env"),
+  resolve(process.cwd(), "config", ".env"),
+  resolve(__dirname, "..", ".env"),
+  resolve(__dirname, "..", "config", ".env"),
+];
 
-const PORT = process.env.PORT || 3000;
+for (const envPath of envCandidates) {
+  if (existsSync(envPath)) {
+    loadDotenv({ path: envPath, override: false });
+    break;
+  }
+}
 
-// Middleware
-app.use(express.json());
+async function bootstrap(): Promise<void> {
+  const env = loadEnv();
+  await initDatabaseConnection();
+  const server = await startBackendServer(env);
 
-// Health check endpoint
-app.get("/", (req, res) => {
-  res.json({
-    status: "OK",
-    message: "SQUAREXO Backend Server",
-    timestamp: new Date(),
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      return;
+    }
+
+    shuttingDown = true;
+    logger.info("graceful_shutdown_start", { signal });
+    try {
+      await server.close();
+      await closeDatabaseConnection();
+      logger.info("graceful_shutdown_done", { signal });
+      process.exit(0);
+    } catch (error) {
+      logger.error("graceful_shutdown_failed", {
+        signal,
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+      process.exit(1);
+    }
+  };
+
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+void bootstrap().catch((error) => {
+  logger.error("bootstrap_failed", {
+    error: error instanceof Error ? error.message : "unknown_error",
   });
-});
-
-// Register Socket.IO handlers
-registerSocketHandlers(io);
-
-// Start server
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Socket.IO ready for connections`);
+  process.exit(1);
 });

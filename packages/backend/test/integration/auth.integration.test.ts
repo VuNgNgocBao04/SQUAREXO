@@ -1,0 +1,696 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import request from "supertest";
+import express, { type Express } from "express";
+import { randomUUID } from "crypto";
+import { createAuthRoutes } from "../../src/http/authRoutes";
+import { JwtTokenService } from "../../src/services/authService";
+import { createAuthMiddleware } from "../../src/http/authMiddleware";
+import { userStore } from "../../src/store/userStore";
+import type { AppEnv } from "../../src/config/env";
+import type { User } from "../../src/types/auth";
+
+function createInMemoryUserRepository() {
+  return {
+    async createUser(user: User): Promise<User> {
+      return userStore.createUser(user);
+    },
+    async findById(id: string): Promise<User | undefined> {
+      return userStore.findById(id);
+    },
+    async findByEmail(email: string): Promise<User | undefined> {
+      return userStore.findByEmail(email);
+    },
+    async findByUsername(username: string): Promise<User | undefined> {
+      return userStore.findByUsername(username);
+    },
+    async updateLastLogin(_userId: string): Promise<void> {},
+  };
+}
+
+function createInMemoryTokenRevocationRepository() {
+  const revoked = new Set<string>();
+
+  return {
+    async revokeToken(_userId: string, jti: string): Promise<void> {
+      revoked.add(jti);
+    },
+    async isTokenRevoked(jti: string): Promise<boolean> {
+      return revoked.has(jti);
+    },
+  };
+}
+
+describe("Auth API Routes", () => {
+  let app: Express;
+  let tokenService: JwtTokenService;
+  let testCounter = 0;
+  const testRunId = Date.now();
+
+  const mockEnv: AppEnv = {
+    PORT: 3000,
+    CORS_ORIGIN: "*",
+    NODE_ENV: "test",
+    JWT_SECRET: "test-secret-key-that-is-long-enough-for-testing",
+    JWT_ISSUER: "squarexo-test-suite",
+    JWT_AUDIENCE: "squarexo-test-clients",
+    JWT_EXPIRES_IN: "7d",
+    REFRESH_TOKEN_EXPIRES_IN: "30d",
+    DATABASE_URL: "postgresql://squarexo:squarexo@localhost:55432/squarexo?schema=public",
+    PUBLIC_BASE_URL: "http://localhost:3000",
+    RECONNECT_TIMEOUT_MS: 30000,
+    DEDUPE_WINDOW_MS: 15000,
+    ROOM_SWEEP_INTERVAL_MS: 5000,
+    OASIS_EXPECTED_CHAIN_ID: 23295,
+    BLOCKCHAIN_TX_TIMEOUT_MS: 45000,
+  };
+
+  beforeEach(() => {
+    // Increment test counter FIRST
+    testCounter += 1;
+    
+    // Clear user store before each test
+    userStore.clear();
+
+    // Create app and token service
+    tokenService = new JwtTokenService(mockEnv);
+    app = express();
+    app.use(express.json());
+
+    // Create auth middleware
+    const authMiddleware = createAuthMiddleware(tokenService);
+
+    // Mount auth routes with auth middleware
+    const authRoutes = createAuthRoutes(
+      tokenService,
+      createInMemoryUserRepository() as any,
+      createInMemoryTokenRevocationRepository() as any,
+      authMiddleware,
+    );
+    app.use("/api/auth", authRoutes);
+
+    // Mount protected route middleware for testing
+    app.get("/api/protected/me", authMiddleware, (req: any, res) => {
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      res.json({ user: req.user });
+    });
+  });
+
+  afterEach(() => {
+    userStore.clear();
+  });
+
+  describe("POST /api/auth/register", () => {
+    it("should register a new user with valid credentials", async () => {
+      const suffix = `${testRunId}_basic_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}`,
+          email: `${suffix}@example.com`,
+          password: "password123",
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty("accessToken");
+      expect(res.body).toHaveProperty("refreshToken");
+      expect(res.body.user).toEqual({
+        id: expect.any(String),
+        username: `user_${suffix}`,
+        email: `${suffix}@example.com`,
+        role: "user",
+        walletAddress: undefined,
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      });
+    });
+
+    it("should register user with optional walletAddress", async () => {
+      const suffix = `${testRunId}_wallet_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const walletAddress = `0x${suffix.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}`,
+          email: `${suffix}@example.com`,
+          password: "password123",
+          walletAddress,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.user.walletAddress).toBe(walletAddress);
+    });
+
+    it("should reject duplicate walletAddress across users", async () => {
+      const suffix = `${testRunId}_dup_wallet_${testCounter}_${randomUUID().substring(0, 8)}`;
+      const walletAddress = `0x${suffix.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}_1`,
+        email: `${suffix}_1@example.com`,
+        password: "password123",
+        walletAddress,
+      });
+
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}_2`,
+          email: `${suffix}_2@example.com`,
+          password: "password123",
+          walletAddress,
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("WALLET_IN_USE");
+    });
+
+    it("should reject duplicate email", async () => {
+      const suffix = `${testRunId}_dup_email_${testCounter}`;
+      // First registration
+      await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}_1`,
+        email: `${suffix}@example.com`,
+        password: "password123",
+      });
+
+      // Second registration with same email
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}_2`,
+          email: `${suffix}@example.com`,
+          password: "password123",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("USER_EXISTS");
+    });
+
+    it("should reject duplicate username", async () => {
+      const suffix = `${testRunId}_dup_username_${testCounter}`;
+      // First registration
+      await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}`,
+        email: `${suffix}_1@example.com`,
+        password: "password123",
+      });
+
+      // Second registration with same username
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user_${suffix}`,
+          email: `${suffix}_2@example.com`,
+          password: "password123",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("USER_EXISTS");
+    });
+
+    it("should reject duplicate username with different casing", async () => {
+      const suffix = `${testRunId}_dup_case_${testCounter}_${randomUUID().substring(0, 8)}`;
+      await request(app).post("/api/auth/register").send({
+        username: `User${suffix}`,
+        email: `${suffix}_1@example.com`,
+        password: "password123",
+      });
+
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: `user${suffix}`,
+          email: `${suffix}_2@example.com`,
+          password: "password123",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("USER_EXISTS");
+    });
+
+    it("should validate required fields", async () => {
+      const res = await request(app).post("/api/auth/register").send({
+        username: "testuser",
+        // missing email and password
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("should validate email format", async () => {
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: "testuser",
+          email: "invalid-email",
+          password: "password123",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("should validate password minimum length", async () => {
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: "testuser",
+          email: "test@example.com",
+          password: "short",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("should validate username minimum length", async () => {
+      const res = await request(app)
+        .post("/api/auth/register")
+        .send({
+          username: "ab",
+          email: "test@example.com",
+          password: "password123",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("should return one success and one conflict under concurrent duplicate registration", async () => {
+      const suffix = `${testRunId}_concurrent_${testCounter}`;
+      const payload = {
+        username: `user_${suffix}`,
+        email: `${suffix}@example.com`,
+        password: "password123",
+      };
+
+      const [r1, r2] = await Promise.all([
+        request(app).post("/api/auth/register").send(payload),
+        request(app).post("/api/auth/register").send(payload),
+      ]);
+
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toEqual([201, 409]);
+      expect([r1.body.code, r2.body.code]).toContain("USER_EXISTS");
+      expect([r1.body.code, r2.body.code]).not.toContain("INTERNAL_ERROR");
+    });
+  });
+
+  describe("POST /api/auth/login", () => {
+    let loginUsername: string;
+    let loginEmail: string;
+
+    beforeEach(async () => {
+      // Create a test user
+      const suffix = `${testRunId}_login_${testCounter}`;
+      loginUsername = `user_${suffix}`;
+      loginEmail = `${suffix}@example.com`;
+      await request(app).post("/api/auth/register").send({
+        username: loginUsername,
+        email: loginEmail,
+        password: "password123",
+      });
+    });
+
+    it("should login with valid credentials", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: loginEmail,
+        password: "password123",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("accessToken");
+      expect(res.body).toHaveProperty("refreshToken");
+      expect(res.body.user).toEqual({
+        id: expect.any(String),
+        username: loginUsername,
+        email: loginEmail,
+        role: "user",
+        walletAddress: undefined,
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      });
+    });
+
+    it("should login with case-insensitive email", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: loginEmail.toUpperCase(),
+        password: "password123",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("accessToken");
+    });
+
+    it("should reject login with wrong password", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: loginEmail,
+        password: "wrongpassword",
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_CREDENTIALS");
+    });
+
+    it("should reject login with non-existent email", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: "nonexistent@example.com",
+        password: "password123",
+      });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_CREDENTIALS");
+    });
+
+    it("should validate required fields", async () => {
+      const res = await request(app).post("/api/auth/login").send({
+        email: loginEmail,
+        // missing password
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+  });
+
+  describe("POST /api/auth/refresh", () => {
+    let refreshToken: string;
+    let refreshEmail: string;
+
+    beforeEach(async () => {
+      // Create a test user and get refresh token
+      const suffix = `${testRunId}_refresh_${testCounter}`;
+      refreshEmail = `${suffix}@example.com`;
+      const res = await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}`,
+        email: refreshEmail,
+        password: "password123",
+      });
+      refreshToken = res.body.refreshToken;
+    });
+
+    it("should refresh access token with valid refresh token", async () => {
+      const res = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("accessToken");
+      expect(res.body).toHaveProperty("refreshToken");
+      expect(res.body.refreshToken).not.toBe(refreshToken);
+    });
+
+    it("should revoke previous refresh token after rotation", async () => {
+      const firstRefresh = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(firstRefresh.status).toBe(200);
+      expect(firstRefresh.body).toHaveProperty("refreshToken");
+
+      const secondRefreshWithOldToken = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(secondRefreshWithOldToken.status).toBe(401);
+      expect(secondRefreshWithOldToken.body.code).toBe("REVOKED_REFRESH_TOKEN");
+
+      const secondRefreshWithNewToken = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: firstRefresh.body.refreshToken });
+
+      expect(secondRefreshWithNewToken.status).toBe(200);
+      expect(secondRefreshWithNewToken.body).toHaveProperty("accessToken");
+      expect(secondRefreshWithNewToken.body).toHaveProperty("refreshToken");
+    });
+
+    it("should reject invalid refresh token", async () => {
+      const res = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: "invalid-token" });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_REFRESH_TOKEN");
+    });
+
+    it("should validate required fields", async () => {
+      const res = await request(app).post("/api/auth/refresh").send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
+    });
+  });
+
+  describe("POST /api/auth/logout", () => {
+    let refreshToken: string;
+    let logoutEmail: string;
+
+    beforeEach(async () => {
+      const suffix = `${testRunId}_logout_${testCounter}`;
+      logoutEmail = `${suffix}@example.com`;
+      const res = await request(app).post("/api/auth/register").send({
+        username: `user_${suffix}`,
+        email: logoutEmail,
+        password: "password123",
+      });
+      refreshToken = res.body.refreshToken;
+    });
+
+    it("should revoke refresh token on logout", async () => {
+      const logoutRes = await request(app)
+        .post("/api/auth/logout")
+        .send({ refreshToken });
+
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body.success).toBe(true);
+
+      const refreshRes = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken });
+
+      expect(refreshRes.status).toBe(401);
+      expect(refreshRes.body.code).toBe("REVOKED_REFRESH_TOKEN");
+    });
+  });
+
+  describe("Authentication Middleware", () => {
+    let accessToken: string;
+    let middlewareUsername: string;
+    let middlewareEmail: string;
+
+    beforeEach(async () => {
+      // Create a test user and get access token
+      const suffix = `${testRunId}_middleware_${testCounter}`;
+      middlewareUsername = `user_${suffix}`;
+      middlewareEmail = `${suffix}@example.com`;
+      const res = await request(app).post("/api/auth/register").send({
+        username: middlewareUsername,
+        email: middlewareEmail,
+        password: "password123",
+      });
+      accessToken = res.body.accessToken;
+    });
+
+    it("should allow access to protected route with valid token", async () => {
+      const res = await request(app)
+        .get("/api/protected/me")
+        .set("Authorization", `Bearer ${accessToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.user).toEqual({
+        userId: expect.any(String),
+        username: middlewareUsername,
+        email: middlewareEmail,
+        role: "user",
+        walletAddress: undefined,
+      });
+    });
+
+    it("should reject access without token", async () => {
+      const res = await request(app).get("/api/protected/me");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("MISSING_TOKEN");
+    });
+
+    it("should reject access with invalid token", async () => {
+      const res = await request(app)
+        .get("/api/protected/me")
+        .set("Authorization", "Bearer invalid-token");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+
+    it("should reject access with malformed Authorization header", async () => {
+      const res = await request(app)
+        .get("/api/protected/me")
+        .set("Authorization", "InvalidFormat token");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("MISSING_TOKEN");
+    });
+  });
+
+  describe("GET /api/auth/me - protected route with middleware", () => {
+    let accessToken: string;
+    let userId: string;
+    let meUsername: string;
+    let meEmail: string;
+
+    beforeEach(async () => {
+      // Create a test user and get access token
+      const suffix = `${testRunId}_me_${testCounter}`;
+      meUsername = `user_${suffix}`;
+      meEmail = `${suffix}@example.com`;
+      const res = await request(app).post("/api/auth/register").send({
+        username: meUsername,
+        email: meEmail,
+        password: "password123",
+      });
+      accessToken = res.body.accessToken;
+      userId = res.body.user.id;
+    });
+
+    it("should return current user info with valid access token", async () => {
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${accessToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        id: userId,
+        username: meUsername,
+        email: meEmail,
+        role: "user",
+        walletAddress: undefined,
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      });
+    });
+
+    it("should reject /api/auth/me without token", async () => {
+      const res = await request(app).get("/api/auth/me");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("MISSING_TOKEN");
+    });
+
+    it("should reject /api/auth/me with invalid token", async () => {
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", "Bearer invalid-token");
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+  });
+
+  describe("PUT /api/auth/wallet", () => {
+    let accessToken: string;
+    let otherAccessToken: string;
+
+    beforeEach(async () => {
+      const primarySuffix = `${testRunId}_wallet_link_${testCounter}`;
+      const secondarySuffix = `${testRunId}_wallet_conflict_${testCounter}`;
+
+      const primary = await request(app).post("/api/auth/register").send({
+        username: `user_${primarySuffix}`,
+        email: `${primarySuffix}@example.com`,
+        password: "password123",
+      });
+
+      const secondary = await request(app).post("/api/auth/register").send({
+        username: `user_${secondarySuffix}`,
+        email: `${secondarySuffix}@example.com`,
+        password: "password123",
+      });
+
+      accessToken = primary.body.accessToken;
+      otherAccessToken = secondary.body.accessToken;
+    });
+
+    it("should link a wallet to the authenticated account", async () => {
+      const walletAddress = `0x${`${testRunId}${testCounter}wallet`.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      const res = await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .send({ walletAddress });
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.walletAddress).toBe(walletAddress);
+    });
+
+    it("should reject linking a wallet that is already linked to another user", async () => {
+      const walletAddress = `0x${`${testRunId}${testCounter}linked`.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(40, "0").slice(0, 40)}`;
+
+      await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${otherAccessToken}`)
+        .send({ walletAddress })
+        .expect(200);
+
+      const res = await request(app)
+        .put("/api/auth/wallet")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .send({ walletAddress });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("WALLET_IN_USE");
+    });
+  });
+
+  describe("Token type validation - Critical Security Tests", () => {
+    let accessToken: string;
+    let refreshToken: string;
+    let tokenUsername: string;
+    let tokenEmail: string;
+
+    beforeEach(async () => {
+      // Register user to get tokens
+      const suffix = `${testRunId}_token_${testCounter}`;
+      tokenUsername = `user_${suffix}`;
+      tokenEmail = `${suffix}@example.com`;
+      const res = await request(app).post("/api/auth/register").send({
+        username: tokenUsername,
+        email: tokenEmail,
+        password: "password123",
+      });
+      accessToken = res.body.accessToken;
+      refreshToken = res.body.refreshToken;
+    });
+
+    it("should reject refresh token when used as access token in protected route", async () => {
+      // Try to use refresh token with bearer to access protected endpoint
+      const res = await request(app)
+        .get("/api/protected/me")
+        .set("Authorization", `Bearer ${refreshToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+
+    it("should reject access token when used as refresh token in refresh endpoint", async () => {
+      // Try to use access token as refresh token
+      const res = await request(app)
+        .post("/api/auth/refresh")
+        .send({ refreshToken: accessToken });
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_REFRESH_TOKEN");
+    });
+
+    it("should reject /api/auth/me with refresh token", async () => {
+      const res = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${refreshToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe("INVALID_TOKEN");
+    });
+  });
+});

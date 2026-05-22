@@ -1,4 +1,4 @@
-import type { Edge, GameState } from '../socket/events';
+import type { Edge, GameState } from "../types/gameCore";
 
 type GameCoreModule = {
   createGame: (rows: number, cols: number) => GameState;
@@ -9,7 +9,7 @@ let gameCoreModulePromise: Promise<GameCoreModule> | null = null;
 
 async function getGameCoreModule(): Promise<GameCoreModule> {
   if (!gameCoreModulePromise) {
-    gameCoreModulePromise = import('game-core') as Promise<GameCoreModule>;
+    gameCoreModulePromise = import("game-core") as Promise<GameCoreModule>;
   }
   return gameCoreModulePromise;
 }

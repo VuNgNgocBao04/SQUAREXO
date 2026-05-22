@@ -1,20 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { io, type Socket } from 'socket.io-client'
+import { createGame, chooseAIMove, type Edge as CoreEdge, type GameState as CoreGameState } from 'game-core'
+import { ethers } from 'ethers'
+import * as sapphire from '@oasisprotocol/sapphire-paratime'
+import {
+  getAccessToken,
+  getUser as getStoredAuthUser,
+  linkWallet as linkWalletToBackend,
+  login as loginWithBackend,
+  logout as logoutFromBackend,
+  register as registerWithBackend,
+} from './services/auth'
 import './App.css'
 
-type Screen = 'home' | 'game' | 'history'
+type Screen = 'auth' | 'home' | 'game' | 'history' | 'room' | 'waiting' | 'settings' | 'profile'
 type GameMode = 'pvp' | 'ai'
 type LineType = 'h' | 'v'
 type ThemeMode = 'dark' | 'light'
+type AuthTab = 'login' | 'register'
+
+type User = {
+  id: string
+  username: string
+  email?: string
+  walletAddress?: string
+  avatar?: string
+  joinedDate?: string
+}
 
 type Line = {
   type: LineType
   r: number
   c: number
-}
-
-type MoveRecord = {
-  line: Line
-  player: number
 }
 
 type HistoryRecord = {
@@ -27,6 +44,117 @@ type HistoryRecord = {
   stake: number
   tx: string
   moves: number
+}
+
+type RoomMessage = {
+  id: number
+  user: string
+  msg: string
+}
+
+type OnlinePlayer = 'X' | 'O'
+
+type RoomInfoPayload = {
+  roomId: string
+  playerX: string | null
+  playerO: string | null
+  assignedPlayer: OnlinePlayer | null
+  isFull: boolean
+  boardSize: { rows: number; cols: number }
+}
+
+type GameStatePayload = {
+  roomId: string
+  currentPlayer: OnlinePlayer
+  state: {
+    rows: number
+    cols: number
+    currentPlayer: OnlinePlayer
+    score: { X: number; O: number }
+    boxes?: Array<{ row: number; col: number; owner: OnlinePlayer }>
+    edges: Array<{
+      from: { row: number; col: number }
+      to: { row: number; col: number }
+      takenBy?: OnlinePlayer
+    }>
+  }
+}
+
+type ChatMessagePayload = {
+  roomId: string
+  playerId: string
+  message: string
+  sentAt: number
+}
+
+type SocketErrorPayload = {
+  code?: string
+  message: string
+}
+
+type MatchSettledPayload = {
+  roomId: string
+  txHash?: string
+  winnerWallet?: string | null
+}
+
+type MatchSettlementFailedPayload = {
+  roomId: string
+  reason?: string
+}
+
+type RematchPromptPayload = {
+  roomId: string
+  from: OnlinePlayer
+  requesterId?: string
+  target?: 'opponent'
+}
+
+type RematchResponsePayload = {
+  roomId: string
+  accept: boolean
+}
+
+type RematchResultPayload = {
+  roomId: string
+  by?: OnlinePlayer
+}
+
+type ServerHistoryRecord = {
+  id: string
+  roomId: string
+  playerX: string
+  playerO: string
+  winnerPlayer: 'X' | 'O' | 'draw'
+  scoreX: number
+  scoreO: number
+  totalMoves: number
+  gridSize: number
+  gameMode: GameMode
+  stakeRose: number
+  txHash?: string
+  startedAt: string
+  endedAt: string
+  createdAt?: string
+}
+
+type HistorySyncPayload = {
+  wallet: string
+  items: Array<{
+    roomId: string
+    playerX?: string
+    playerO?: string
+    winnerPlayer: 'X' | 'O' | 'draw'
+    scoreX: number
+    scoreO: number
+    totalMoves: number
+    gridSize: number
+    gameMode: GameMode
+    stakeRose: number
+    txHash?: string
+    startedAt?: string
+    endedAt: string
+  }>
 }
 
 const DOT = 18
@@ -52,20 +180,144 @@ function genTxHash() {
   )
 }
 
+function genRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('')
+}
+
+function normalizeRoomId(roomId: string) {
+  return roomId.trim().toUpperCase()
+}
+
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL && typeof import.meta.env.VITE_BACKEND_URL === 'string'
+    ? import.meta.env.VITE_BACKEND_URL
+    : 'http://localhost:3000'
+
+type OasisNetworkKey = 'testnet' | 'mainnet'
+
+type OasisNetworkConfig = {
+  chainId: bigint
+  chainHex: string
+  chainName: string
+  currencyName: string
+  rpcUrls: string[]
+  blockExplorerUrls: string[]
+}
+
+const OASIS_NETWORKS: Record<OasisNetworkKey, OasisNetworkConfig> = {
+  testnet: {
+    chainId: 0x5affn,
+    chainHex: '0x5aff',
+    chainName: 'Oasis Sapphire Testnet',
+    currencyName: 'Test ROSE',
+    rpcUrls: ['https://testnet.sapphire.oasis.io'],
+    blockExplorerUrls: ['https://explorer.oasis.io/testnet/sapphire'],
+  },
+  mainnet: {
+    chainId: 0x5afen,
+    chainHex: '0x5afe',
+    chainName: 'Oasis Sapphire',
+    currencyName: 'ROSE',
+    rpcUrls: ['https://sapphire.oasis.io'],
+    blockExplorerUrls: ['https://explorer.oasis.io/mainnet/sapphire'],
+  },
+}
+
+const selectedOasisNetwork: OasisNetworkKey = import.meta.env.VITE_OASIS_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
+const baseOasisNetworkConfig = OASIS_NETWORKS[selectedOasisNetwork]
+const configuredRpcUrls = [
+  import.meta.env.VITE_OASIS_RPC_URL,
+  ...(import.meta.env.VITE_OASIS_RPC_FALLBACK_URLS ?? '').split(',').map((item) => item.trim()),
+]
+  .filter((item): item is string => typeof item === 'string' && item.length > 0)
+
+const OASIS_CONFIG: OasisNetworkConfig = {
+  ...baseOasisNetworkConfig,
+  rpcUrls: configuredRpcUrls.length > 0 ? Array.from(new Set(configuredRpcUrls)) : baseOasisNetworkConfig.rpcUrls,
+}
+
+const OASIS_CHAIN_ID = OASIS_CONFIG.chainId
+const OASIS_CHAIN_HEX = OASIS_CONFIG.chainHex
+const OASIS_CHAIN_NAME = OASIS_CONFIG.chainName
+const CONTRACT_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined) ?? ''
+
+const squarexoMatchAbi = [
+  'function createMatch(string roomId, uint256 betAmount) payable',
+  'function joinMatch(string roomId) payable',
+  'function claimReward(string roomId)',
+] as const
+
+function createRuntimePlayerId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `player_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
+  }
+  return `player_${Math.random().toString(36).slice(2, 14)}`
+}
+
+function formatWalletLabel(address: string) {
+  return `${address.slice(0, 8)}...${address.slice(-6)}`
+}
+
 function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem('dbTheme')
     return saved === 'light' ? 'light' : 'dark'
   })
 
-  const [screen, setScreen] = useState<Screen>('home')
+  // Auth state
+  const [authUser, setAuthUser] = useState<User | null>(() => {
+    try {
+      const savedAuthUser = getStoredAuthUser()
+      if (savedAuthUser) {
+        return {
+          id: savedAuthUser.id,
+          username: savedAuthUser.username,
+          email: savedAuthUser.email,
+          walletAddress: savedAuthUser.walletAddress,
+          avatar: '🎮',
+          joinedDate: savedAuthUser.createdAt ? new Date(savedAuthUser.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+      }
+
+      const saved = localStorage.getItem('dbAuthUser')
+      return saved ? (JSON.parse(saved) as User) : null
+    } catch {
+      return null
+    }
+  })
+  const [authTab, setAuthTab] = useState<AuthTab>('login')
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '', confirm: '' })
+  const [authError, setAuthError] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
+
+  const [screen, setScreen] = useState<Screen>(() => (authUser ? 'home' : 'auth'))
+  const [prevScreen, setPrevScreen] = useState<Exclude<Screen, 'settings'>>('home')
   const [gridSize, setGridSize] = useState(3)
   const [gameMode, setGameMode] = useState<GameMode>('pvp')
   const [stakeEth, setStakeEth] = useState(0.01)
+  const [roomCode, setRoomCode] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+  const [roomPlayers, setRoomPlayers] = useState(1)
+  const [roomCountdown, setRoomCountdown] = useState<number | null>(null)
+  const [onlineConnected, setOnlineConnected] = useState(false)
+  const [onlineAssignedPlayer, setOnlineAssignedPlayer] = useState<OnlinePlayer | null>(null)
+  const [isOnlineMatch, setIsOnlineMatch] = useState(false)
+  const [roomChat, setRoomChat] = useState<RoomMessage[]>([
+    { id: 1, user: 'System', msg: 'Phòng chờ đã được tạo. Chia sẻ mã phòng để đối thủ tham gia.' },
+  ])
+  const [chatMsg, setChatMsg] = useState('')
 
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('Chưa kết nối')
+  const [, setWalletAccount] = useState<string | null>(null)
   const [walletBalance, setWalletBalance] = useState('0.0000')
+  const [walletPending, setWalletPending] = useState(false)
+  const [chainStatus, setChainStatus] = useState<'idle' | 'staking' | 'playing' | 'settling' | 'settled'>('idle')
+  const [contractConfigured, setContractConfigured] = useState(false)
+  const [contractCheckMessage, setContractCheckMessage] = useState('Đang kiểm tra smart contract...')
+  const [rematchPending, setRematchPending] = useState(false)
 
   const [currentPlayer, setCurrentPlayer] = useState(1)
   const [scores, setScores] = useState<[number, number]>([0, 0])
@@ -97,22 +349,30 @@ function App() {
   })
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const socketRef = useRef<Socket | null>(null)
+  const clientSequenceRef = useRef(0)
   const blockIntervalRef = useRef<number | null>(null)
   const aiTimeoutRef = useRef<number | null>(null)
   const chainTimeoutRef = useRef<number | null>(null)
+  const countdownRef = useRef<number | null>(null)
+  const matchCountdownValueRef = useRef<number | null>(null)
+  const endModalShownRef = useRef(false)
+  const endGameRef = useRef<(() => void) | null>(null)
 
   const hLinesRef = useRef<number[][]>([])
   const vLinesRef = useRef<number[][]>([])
   const boxesRef = useRef<number[][]>([])
-  const moveHistoryRef = useRef<MoveRecord[]>([])
 
   const currentPlayerRef = useRef(1)
   const scoresRef = useRef<[number, number]>([0, 0])
   const totalMovesRef = useRef(0)
   const gameActiveRef = useRef(false)
   const gridSizeRef = useRef(3)
+  const roomCodeRef = useRef('')
+  const roomPlayersRef = useRef(1)
   const gameModeRef = useRef<GameMode>('pvp')
   const stakeEthRef = useRef(0.01)
+  const clientPlayerIdRef = useRef(createRuntimePlayerId())
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -123,6 +383,91 @@ function App() {
       setToast(null)
     }, 3000)
   }, [])
+
+  const readLocalHistory = useCallback((): HistoryRecord[] => {
+    try {
+      const raw = localStorage.getItem('dbChainHistory')
+      return raw ? (JSON.parse(raw) as HistoryRecord[]) : []
+    } catch {
+      return []
+    }
+  }, [])
+
+  const saveLocalHistory = useCallback((records: HistoryRecord[]) => {
+    localStorage.setItem('dbChainHistory', JSON.stringify(records))
+  }, [])
+
+  const toServerHistoryItem = useCallback((record: HistoryRecord) => {
+    const winnerPlayer: 'X' | 'O' | 'draw' = record.winner === 1 ? 'X' : record.winner === 2 ? 'O' : 'draw'
+    return {
+      roomId: record.id.toString(),
+      playerX: 'local-player-x',
+      playerO: 'local-player-o',
+      winnerPlayer,
+      scoreX: record.scores[0],
+      scoreO: record.scores[1],
+      totalMoves: record.moves,
+      gridSize: record.gridSize,
+      gameMode: record.mode,
+      stakeRose: record.stake,
+      txHash: record.tx,
+      startedAt: new Date(Date.now() - 60000).toISOString(),
+      endedAt: new Date(record.date).toISOString(),
+    }
+  }, [])
+
+  const fromServerHistoryRecord = useCallback((record: ServerHistoryRecord): HistoryRecord => {
+    const winner = record.winnerPlayer === 'X' ? 1 : record.winnerPlayer === 'O' ? 2 : 0
+    return {
+      id: Number.parseInt(record.id.replace(/\D/g, '').slice(0, 12) || `${Date.now()}`, 10),
+      date: new Date(record.endedAt).toLocaleString('vi-VN'),
+      gridSize: record.gridSize,
+      mode: record.gameMode,
+      scores: [record.scoreX, record.scoreO],
+      winner,
+      stake: record.stakeRose,
+      tx: record.txHash || 'Tx: N/A',
+      moves: record.totalMoves,
+    }
+  }, [])
+
+  const syncPendingHistoryToServer = useCallback(
+    async (wallet: string) => {
+      const pending = readLocalHistory()
+      if (!pending.length) {
+        return
+      }
+
+      const payload: HistorySyncPayload = {
+        wallet,
+        items: pending.map((record) => toServerHistoryItem(record)),
+      }
+
+      const response = await fetch(`${BACKEND_URL}/api/history/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error(`History sync failed (${response.status})`)
+      }
+
+      localStorage.removeItem('dbChainHistory')
+    },
+    [readLocalHistory, toServerHistoryItem],
+  )
+
+  const fetchHistoryFromServer = useCallback(async (wallet: string) => {
+    const response = await fetch(`${BACKEND_URL}/api/history?wallet=${encodeURIComponent(wallet)}`)
+    if (!response.ok) {
+      throw new Error(`History fetch failed (${response.status})`)
+    }
+
+    const data = (await response.json()) as { items?: ServerHistoryRecord[] } | ServerHistoryRecord[]
+    const items = Array.isArray(data) ? data : data.items
+    return Array.isArray(items) ? items.map(fromServerHistoryRecord) : []
+  }, [fromServerHistoryRecord])
 
   const setCurrentPlayerSafe = useCallback((player: number) => {
     currentPlayerRef.current = player
@@ -152,7 +497,436 @@ function App() {
       window.clearTimeout(chainTimeoutRef.current)
       chainTimeoutRef.current = null
     }
+    if (countdownRef.current) {
+      window.clearInterval(countdownRef.current)
+      countdownRef.current = null
+    }
+    matchCountdownValueRef.current = null
   }, [])
+
+  const updateRoomPlayers = useCallback((count: number) => {
+    roomPlayersRef.current = count
+    setRoomPlayers(count)
+  }, [])
+
+  const setRoomCodeSafe = useCallback((code: string) => {
+    roomCodeRef.current = code
+    setRoomCode(code)
+  }, [])
+
+  const stopMatchCountdown = useCallback(() => {
+    if (countdownRef.current) {
+      window.clearInterval(countdownRef.current)
+      countdownRef.current = null
+    }
+    matchCountdownValueRef.current = null
+    setRoomCountdown(null)
+  }, [])
+
+  const startMatchCountdown = useCallback(() => {
+    if (countdownRef.current) {
+      return
+    }
+
+    let remaining = 10
+    matchCountdownValueRef.current = remaining
+    setRoomCountdown(remaining)
+    setRoomChat((prev) => {
+      if (prev.some((item) => item.msg.includes('Bắt đầu sau 10 giây'))) {
+        return prev
+      }
+      return [...prev, { id: Date.now(), user: 'System', msg: 'Đủ người chơi. Bắt đầu sau 10 giây...' }]
+    })
+
+    countdownRef.current = window.setInterval(() => {
+      remaining -= 1
+      matchCountdownValueRef.current = remaining
+      setRoomCountdown(remaining)
+      if (remaining <= 0) {
+        if (countdownRef.current) {
+          window.clearInterval(countdownRef.current)
+          countdownRef.current = null
+        }
+        matchCountdownValueRef.current = null
+        setRoomCountdown(null)
+        setScreen('game')
+      }
+    }, 1000)
+  }, [])
+
+  const getChatAuthor = useCallback((playerId: string) => {
+    const currentIdentityId = authUser?.id ?? getStoredAuthUser()?.id ?? clientPlayerIdRef.current
+    if (playerId === currentIdentityId) {
+      return 'Bạn'
+    }
+    return 'Đối thủ'
+  }, [authUser])
+
+  const edgeToLine = useCallback((edge: CoreEdge): Line => {
+    if (edge.from.row === edge.to.row) {
+      return {
+        type: 'h',
+        r: edge.from.row,
+        c: Math.min(edge.from.col, edge.to.col),
+      }
+    }
+
+    return {
+      type: 'v',
+      r: Math.min(edge.from.row, edge.to.row),
+      c: edge.from.col,
+    }
+  }, [])
+
+  const toCoreGameState = useCallback((): CoreGameState => {
+    const base = createGame(gridSizeRef.current, gridSizeRef.current)
+    const takenMap = new Map<string, 'X' | 'O'>()
+
+    for (let r = 0; r <= gridSizeRef.current; r++) {
+      for (let c = 0; c < gridSizeRef.current; c++) {
+        const owner = hLinesRef.current[r]?.[c]
+        if (owner) {
+          takenMap.set(`${r},${c}-${r},${c + 1}`, owner === 1 ? 'X' : 'O')
+        }
+      }
+    }
+
+    for (let r = 0; r < gridSizeRef.current; r++) {
+      for (let c = 0; c <= gridSizeRef.current; c++) {
+        const owner = vLinesRef.current[r]?.[c]
+        if (owner) {
+          takenMap.set(`${r},${c}-${r + 1},${c}`, owner === 1 ? 'X' : 'O')
+        }
+      }
+    }
+
+    const edges = base.edges.map((edge) => {
+      const key = `${edge.from.row},${edge.from.col}-${edge.to.row},${edge.to.col}`
+      const takenBy = takenMap.get(key)
+      return takenBy ? { ...edge, takenBy } : edge
+    })
+
+    return {
+      ...base,
+      edges,
+      currentPlayer: currentPlayerRef.current === 1 ? 'X' : 'O',
+      score: {
+        X: scoresRef.current[0],
+        O: scoresRef.current[1],
+      },
+    }
+  }, [])
+
+  const hydrateFromServerState = useCallback(
+    (payload: GameStatePayload) => {
+      const rows = payload.state.rows
+      const cols = payload.state.cols
+      if (rows !== cols) {
+        showToast('Phiên bản giao diện hiện hỗ trợ bàn cờ vuông.')
+      }
+
+      const effectiveSize = rows
+      gridSizeRef.current = effectiveSize
+      setGridSize(effectiveSize)
+
+      const next = createEmptyState(effectiveSize)
+      let takenMoves = 0
+
+      for (const edge of payload.state.edges) {
+        if (!edge.takenBy) continue
+        const owner = edge.takenBy === 'X' ? 1 : 2
+        if (edge.from.row === edge.to.row) {
+          const row = edge.from.row
+          const col = Math.min(edge.from.col, edge.to.col)
+          if (row >= 0 && row <= effectiveSize && col >= 0 && col < effectiveSize) {
+            next.hLines[row][col] = owner
+            takenMoves += 1
+          }
+        } else {
+          const row = Math.min(edge.from.row, edge.to.row)
+          const col = edge.from.col
+          if (row >= 0 && row < effectiveSize && col >= 0 && col <= effectiveSize) {
+            next.vLines[row][col] = owner
+            takenMoves += 1
+          }
+        }
+      }
+
+      if (payload.state.boxes?.length) {
+        for (const box of payload.state.boxes) {
+          if (box.row >= 0 && box.row < effectiveSize && box.col >= 0 && box.col < effectiveSize) {
+            next.boxes[box.row][box.col] = box.owner === 'X' ? 1 : 2
+          }
+        }
+      }
+
+      hLinesRef.current = next.hLines
+      vLinesRef.current = next.vLines
+      boxesRef.current = next.boxes
+      setScoresSafe([payload.state.score.X, payload.state.score.O])
+      setCurrentPlayerSafe(payload.state.currentPlayer === 'X' ? 1 : 2)
+      setTotalMovesSafe(takenMoves)
+      gameActiveRef.current = true
+      setGameActive(true)
+      setDrawVersion((v) => v + 1)
+
+      const filledBoxes = payload.state.score.X + payload.state.score.O
+      const totalBoxes = payload.state.rows * payload.state.cols
+      if (filledBoxes >= totalBoxes && !endModalShownRef.current) {
+        endModalShownRef.current = true
+        window.setTimeout(() => {
+          endGameRef.current?.()
+        }, 200)
+      }
+    },
+    [setCurrentPlayerSafe, setScoresSafe, setTotalMovesSafe, showToast],
+  )
+
+  const disconnectOnlineSocket = useCallback(() => {
+    stopMatchCountdown()
+    if (socketRef.current) {
+      socketRef.current.disconnect()
+      socketRef.current = null
+    }
+    setOnlineConnected(false)
+    setOnlineAssignedPlayer(null)
+  }, [stopMatchCountdown])
+
+  const connectOnlineSocket = useCallback(async () => {
+    disconnectOnlineSocket()
+
+    const token = getAccessToken()
+    if (!token) {
+      throw new Error('Chưa đăng nhập, không thể kết nối realtime')
+    }
+
+    const socket = io(BACKEND_URL, {
+      auth: { token },
+      transports: ['websocket'],
+      timeout: 5000,
+      reconnection: true,
+      reconnectionAttempts: 5,
+    })
+
+    socket.on('connect', () => {
+      setOnlineConnected(true)
+    })
+
+    socket.on('disconnect', () => {
+      setOnlineConnected(false)
+      setOnlineAssignedPlayer(null)
+      if (isOnlineMatch) {
+        showToast('Mất kết nối realtime. Vui lòng vào lại phòng.')
+      }
+    })
+
+    socket.on('room_info', (payload: RoomInfoPayload) => {
+      const playerCount = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
+      setRoomCodeSafe(payload.roomId)
+      setOnlineAssignedPlayer(payload.assignedPlayer)
+      updateRoomPlayers(playerCount)
+      setIsOnlineMatch(true)
+
+      if (payload.isFull || playerCount >= 2) {
+        startMatchCountdown()
+        setScreen('waiting')
+      } else {
+        stopMatchCountdown()
+        setScreen('waiting')
+      }
+    })
+
+    socket.on('player_joined', (payload: RoomInfoPayload) => {
+      const count = (payload.playerX ? 1 : 0) + (payload.playerO ? 1 : 0)
+      updateRoomPlayers(count)
+      setRoomCodeSafe(payload.roomId)
+      setIsOnlineMatch(true)
+      if (payload.isFull || count >= 2) {
+        startMatchCountdown()
+      }
+    })
+
+    socket.on('game_state', (payload: GameStatePayload) => {
+      hydrateFromServerState(payload)
+      setIsOnlineMatch(true)
+      if (roomPlayersRef.current >= 2 && matchCountdownValueRef.current === null) {
+        setScreen('game')
+      }
+    })
+
+    socket.on('chat_message', (payload: ChatMessagePayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setRoomChat((prev) => [
+        ...prev,
+        {
+          id: payload.sentAt,
+          user: getChatAuthor(payload.playerId),
+          msg: payload.message,
+        },
+      ])
+    })
+
+    socket.on('error', (payload: SocketErrorPayload) => {
+      const message = payload?.code ? `[${payload.code}] ${payload.message}` : payload.message
+      showToast(message)
+    })
+
+    socket.on('match_settled', (payload: MatchSettledPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode) {
+        return
+      }
+
+      if (normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setChainStatus('settled')
+      setModalState((prev) => ({
+        ...prev,
+        sub: 'Kết quả đã được backend ghi lên Oasis Sapphire thành công.',
+        tx: payload.txHash ? `Tx: ${payload.txHash}` : 'Tx: Đã ghi nhận on-chain',
+      }))
+
+      if (payload.txHash) {
+        showToast(`Match settled on-chain: ${payload.txHash.slice(0, 10)}...`)
+      }
+    })
+
+    socket.on('match_settlement_failed', (payload: MatchSettlementFailedPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setChainStatus('settling')
+      setModalState((prev) => ({
+        ...prev,
+        sub: 'Backend chưa thể xác nhận giao dịch testnet. Vui lòng thử lại sau ít giây.',
+        tx: payload.reason ? `Lý do: ${payload.reason}` : 'Đang chờ retry settlement...',
+      }))
+      showToast('Settlement on-chain chưa thành công, hệ thống đang giữ kết quả để retry')
+    })
+
+    socket.on('room_cleaned', () => {
+      setModalState((prev) => ({ ...prev, open: false }))
+      setRematchPending(false)
+      setIsOnlineMatch(false)
+      setRoomCountdown(null)
+      setJoinCode('')
+      setRoomCodeSafe('')
+      setScreen('home')
+      showToast('Phòng đã đóng. Quay về màn hình chính.')
+    })
+
+    socket.on('rematch_prompt', (payload: RematchPromptPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      if (payload.target === 'opponent') {
+        const accept = window.confirm('Đối thủ muốn đấu lại. Bạn có đồng ý không?')
+        const response: RematchResponsePayload = {
+          roomId: payload.roomId,
+          accept,
+        }
+        socket.emit('rematch_response', response)
+      } else {
+        setRematchPending(true)
+        showToast('Đã gửi yêu cầu đấu lại. Đang chờ đối thủ phản hồi...')
+      }
+    })
+
+    socket.on('rematch_started', (payload: RematchResultPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setRematchPending(false)
+      setModalState((prev) => ({ ...prev, open: false }))
+      setChainStatus('playing')
+      endModalShownRef.current = false
+      showToast('Đối thủ đã đồng ý. Bắt đầu ván đấu mới!')
+    })
+
+    socket.on('rematch_declined', (payload: RematchResultPayload) => {
+      const activeRoomCode = roomCodeRef.current
+      if (!activeRoomCode || normalizeRoomId(payload.roomId) !== normalizeRoomId(activeRoomCode)) {
+        return
+      }
+
+      setRematchPending(false)
+      setModalState((prev) => ({ ...prev, open: false }))
+      showToast('Đối thủ không đồng ý đấu lại. Trận đấu kết thúc cho cả hai.')
+    })
+
+    socketRef.current = socket
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        reject(new Error('Socket connection timeout'))
+      }, 6000)
+
+      socket.once('connect', () => {
+        window.clearTimeout(timeout)
+        resolve()
+      })
+
+      socket.once('connect_error', (error) => {
+        window.clearTimeout(timeout)
+        reject(error)
+      })
+    })
+
+    return socket
+  }, [
+    disconnectOnlineSocket,
+    getChatAuthor,
+    hydrateFromServerState,
+    isOnlineMatch,
+    setRoomCodeSafe,
+    showToast,
+    startMatchCountdown,
+    stopMatchCountdown,
+    updateRoomPlayers,
+  ])
+
+  const joinOnlineRoom = useCallback(
+    async (code: string) => {
+      try {
+        const socket = await connectOnlineSocket()
+        clientSequenceRef.current = 0
+        endModalShownRef.current = false
+        setOnlineAssignedPlayer(null)
+        updateRoomPlayers(1)
+        stopMatchCountdown()
+        setRoomCodeSafe(code)
+        setScreen('waiting')
+
+        const payload = {
+          roomId: code,
+          rows: gridSizeRef.current,
+          cols: gridSizeRef.current,
+          stakeRose: stakeEthRef.current,
+        }
+
+        socket.emit('join_room', payload)
+      } catch {
+        showToast('Không kết nối được server realtime. Kiểm tra backend và thử lại.')
+      }
+    },
+    [connectOnlineSocket, setRoomCodeSafe, showToast, stopMatchCountdown, updateRoomPlayers],
+  )
 
   const isGameOver = useCallback(() => {
     const [p1, p2] = scoresRef.current
@@ -171,6 +945,19 @@ function App() {
 
     const cell = getCellSize()
     const size = canvasSize
+    const expectedSize = gridSizeRef.current
+
+    if (
+      hLinesRef.current.length !== expectedSize + 1 ||
+      vLinesRef.current.length !== expectedSize ||
+      boxesRef.current.length !== expectedSize
+    ) {
+      const empty = createEmptyState(expectedSize)
+      hLinesRef.current = empty.hLines
+      vLinesRef.current = empty.vLines
+      boxesRef.current = empty.boxes
+    }
+
     const styles = getComputedStyle(document.documentElement)
     const canvasDot = styles.getPropertyValue('--canvas-dot').trim() || '#e0f0ff'
     const emptyLine =
@@ -285,15 +1072,6 @@ function App() {
     setCanvasSize(size)
   }, [])
 
-  const countEdgesBox = useCallback((r: number, c: number) => {
-    return (
-      (hLinesRef.current[r][c] ? 1 : 0) +
-      (hLinesRef.current[r + 1][c] ? 1 : 0) +
-      (vLinesRef.current[r][c] ? 1 : 0) +
-      (vLinesRef.current[r][c + 1] ? 1 : 0)
-    )
-  }, [])
-
   const checkBoxes = useCallback((player: number) => {
     let captured = false
     const nextScores: [number, number] = [...scoresRef.current] as [number, number]
@@ -367,10 +1145,10 @@ function App() {
   const saveHistory = useCallback((record: HistoryRecord) => {
     setGameHistory((prev) => {
       const next = [record, ...prev].slice(0, 50)
-      localStorage.setItem('dbChainHistory', JSON.stringify(next))
+      saveLocalHistory(next)
       return next
     })
-  }, [])
+  }, [saveLocalHistory])
 
   const spawnConfetti = useCallback(() => {
     const colors = ['#00f5ff', '#ff006e', '#7b2fff', '#ffd60a', '#ffffff']
@@ -420,20 +1198,28 @@ function App() {
       spawnConfetti()
     }
 
+    setChainStatus(isOnlineMatch ? 'settling' : 'settled')
+
     setModalState({
       open: true,
       icon,
       title,
-      sub,
-      tx: 'Tx: Đang xử lý...',
+      sub: isOnlineMatch
+        ? 'Backend signer đang ghi kết quả on-chain lên Oasis Sapphire...'
+        : sub,
+      tx: isOnlineMatch ? 'Tx: Chờ backend xác nhận...' : 'Tx: Đang xử lý...',
     })
+
+    if (isOnlineMatch) {
+      return
+    }
 
     const delay = 1500 + Math.random() * 1000
     chainTimeoutRef.current = window.setTimeout(() => {
       const tx = genTxHash()
       setModalState((prev) => ({
         ...prev,
-        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ETH đã được chuyển.` : ''}`,
+        sub: `Kết quả đã được ghi on-chain thành công! ${stakeEthRef.current > 0 ? `Stake ${stakeEthRef.current.toFixed(3)} ROSE đã được chuyển.` : ''}`,
         tx: `Tx: ${tx}`,
       }))
 
@@ -449,7 +1235,11 @@ function App() {
         moves: totalMovesRef.current,
       })
     }, delay)
-  }, [saveHistory, spawnConfetti])
+  }, [isOnlineMatch, saveHistory, spawnConfetti])
+
+  useEffect(() => {
+    endGameRef.current = endGame
+  }, [endGame])
 
   const applyMove = useCallback(
     (line: Line) => {
@@ -462,7 +1252,6 @@ function App() {
         vLinesRef.current[line.r][line.c] = player
       }
 
-      moveHistoryRef.current.push({ line, player })
       setTotalMovesSafe(totalMovesRef.current + 1)
 
       const captured = checkBoxes(player)
@@ -487,116 +1276,25 @@ function App() {
     [checkBoxes, endGame, isGameOver, setCurrentPlayerSafe, setTotalMovesSafe],
   )
 
-  const getAllFreeLines = useCallback(() => {
-    const lines: Line[] = []
-    for (let r = 0; r <= gridSizeRef.current; r++) {
-      for (let c = 0; c < gridSizeRef.current; c++) {
-        if (!hLinesRef.current[r][c]) lines.push({ type: 'h', r, c })
-      }
-    }
-    for (let r = 0; r < gridSizeRef.current; r++) {
-      for (let c = 0; c <= gridSizeRef.current; c++) {
-        if (!vLinesRef.current[r][c]) lines.push({ type: 'v', r, c })
-      }
-    }
-    return lines
-  }, [])
-
-  const lineCompletesBox = useCallback(
-    (line: Line) => {
-      if (line.type === 'h') {
-        if (line.r > 0 && countEdgesBox(line.r - 1, line.c) === 3) return true
-        if (line.r < gridSizeRef.current && countEdgesBox(line.r, line.c) === 3) return true
-      } else {
-        if (line.c > 0 && countEdgesBox(line.r, line.c - 1) === 3) return true
-        if (line.c < gridSizeRef.current && countEdgesBox(line.r, line.c) === 3) return true
-      }
-      return false
-    },
-    [countEdgesBox],
-  )
-
-  const lineGivesOpponent = useCallback(
-    (line: Line) => {
-      if (line.type === 'h') {
-        if (line.r > 0 && countEdgesBox(line.r - 1, line.c) === 2) return true
-        if (line.r < gridSizeRef.current && countEdgesBox(line.r, line.c) === 2) return true
-      } else {
-        if (line.c > 0 && countEdgesBox(line.r, line.c - 1) === 2) return true
-        if (line.c < gridSizeRef.current && countEdgesBox(line.r, line.c) === 2) return true
-      }
-      return false
-    },
-    [countEdgesBox],
-  )
-
   const aiMove = useCallback(() => {
     if (!gameActiveRef.current || currentPlayerRef.current !== 2) return
 
-    const all = getAllFreeLines()
-    const completing = all.find((line) => lineCompletesBox(line))
-    const safe = all.find((line) => !lineGivesOpponent(line))
-    const random = all.length ? all[Math.floor(Math.random() * all.length)] : null
-    const move = completing ?? safe ?? random
-    if (move) {
-      applyMove(move)
+    const state = toCoreGameState()
+    const selectedEdge = chooseAIMove(state)
+    if (selectedEdge) {
+      applyMove(edgeToLine(selectedEdge))
     }
-  }, [applyMove, getAllFreeLines, lineCompletesBox, lineGivesOpponent])
-
-  const rebuildFromHistory = useCallback((moves: MoveRecord[]) => {
-    const empty = createEmptyState(gridSizeRef.current)
-    const nextScores: [number, number] = [0, 0]
-
-    for (const move of moves) {
-      if (move.line.type === 'h') {
-        empty.hLines[move.line.r][move.line.c] = move.player
-      } else {
-        empty.vLines[move.line.r][move.line.c] = move.player
-      }
-
-      for (let r = 0; r < gridSizeRef.current; r++) {
-        for (let c = 0; c < gridSizeRef.current; c++) {
-          if (empty.boxes[r][c]) continue
-          if (
-            empty.hLines[r][c] &&
-            empty.hLines[r + 1][c] &&
-            empty.vLines[r][c] &&
-            empty.vLines[r][c + 1]
-          ) {
-            empty.boxes[r][c] = move.player
-            nextScores[move.player - 1] += 1
-          }
-        }
-      }
-    }
-
-    hLinesRef.current = empty.hLines
-    vLinesRef.current = empty.vLines
-    boxesRef.current = empty.boxes
-    setScoresSafe(nextScores)
-  }, [setScoresSafe])
-
-  const undoMove = useCallback(() => {
-    if (!moveHistoryRef.current.length) {
-      showToast('Không có nước để hoàn tác!')
-      return
-    }
-
-    const last = moveHistoryRef.current.pop()
-    if (!last) return
-
-    rebuildFromHistory(moveHistoryRef.current)
-    setCurrentPlayerSafe(last.player)
-    setTotalMovesSafe(moveHistoryRef.current.length)
-    setDrawVersion((v) => v + 1)
-  }, [rebuildFromHistory, setCurrentPlayerSafe, setTotalMovesSafe, showToast])
+  }, [applyMove, edgeToLine, toCoreGameState])
 
   const startGame = useCallback(() => {
+    setIsOnlineMatch(false)
+    setRematchPending(false)
+    setChainStatus('idle')
+    endModalShownRef.current = false
     const empty = createEmptyState(gridSize)
     hLinesRef.current = empty.hLines
     vLinesRef.current = empty.vLines
     boxesRef.current = empty.boxes
-    moveHistoryRef.current = []
 
     setScoresSafe([0, 0])
     setCurrentPlayerSafe(1)
@@ -625,55 +1323,387 @@ function App() {
     gameActiveRef.current = false
     setGameActive(false)
     clearTimers()
+    disconnectOnlineSocket()
+    setIsOnlineMatch(false)
+    setRematchPending(false)
+    setChainStatus('idle')
+    setRoomCountdown(null)
+    setJoinCode('')
+    setChatMsg('')
+    setRoomCodeSafe('')
+    endModalShownRef.current = false
     setScreen('home')
-  }, [clearTimers])
+  }, [clearTimers, disconnectOnlineSocket, setRoomCodeSafe])
+
+  const openSettings = useCallback(() => {
+    if (screen !== 'settings') {
+      setPrevScreen(screen as Exclude<Screen, 'settings'>)
+    }
+    setScreen('settings')
+  }, [screen])
+
+  const closeSettings = useCallback(() => {
+    setScreen(prevScreen)
+  }, [prevScreen])
+
+  const openProfile = useCallback(() => {
+    setScreen('profile')
+  }, [])
 
   const showHistory = useCallback(() => {
+    setModalState((prev) => ({ ...prev, open: false }))
     setScreen('history')
   }, [])
 
-  const connectWallet = useCallback(() => {
-    const addr =
-      '0x' +
-      Array.from({ length: 4 }, () =>
-        Math.floor(Math.random() * 0xffff)
-          .toString(16)
-          .padStart(4, '0'),
-      ).join('') +
-      '...'
-    const balance = (Math.random() * 2 + 0.1).toFixed(4)
-
-    window.setTimeout(() => {
-      setWalletConnected(true)
-      setWalletAddress(addr)
-      setWalletBalance(balance)
-      showToast('Kết nối ví thành công!')
-    }, 1200)
-  }, [showToast])
-
-  const confirmForfeit = useCallback(() => {
-    if (!window.confirm('Xác nhận bỏ cuộc? Đối thủ sẽ thắng.')) return
-
-    gameActiveRef.current = false
-    setGameActive(false)
-    if (blockIntervalRef.current) {
-      window.clearInterval(blockIntervalRef.current)
-      blockIntervalRef.current = null
+  const checkContractConfiguration = useCallback(async () => {
+    if (!CONTRACT_ADDRESS) {
+      setContractConfigured(false)
+      setContractCheckMessage('Smart contract chưa được cấu hình')
+      return false
     }
 
-    const winner = currentPlayerRef.current === 1 ? 2 : 1
-    const full = gridSizeRef.current * gridSizeRef.current
-    const nextScores: [number, number] = winner === 1 ? [full, 0] : [0, full]
-    setScoresSafe(nextScores)
-    setCurrentPlayerSafe(winner)
-    setDrawVersion((v) => v + 1)
-    endGame()
-  }, [endGame, setCurrentPlayerSafe, setScoresSafe])
+    try {
+      const provider = new ethers.JsonRpcProvider(OASIS_CONFIG.rpcUrls[0], OASIS_CHAIN_ID)
+      const code = await provider.getCode(CONTRACT_ADDRESS)
+      if (!code || code === '0x') {
+        setContractConfigured(false)
+        setContractCheckMessage('Không tìm thấy contract trên Oasis Sapphire')
+        return false
+      }
+
+      setContractConfigured(true)
+      setContractCheckMessage('Smart contract sẵn sàng trên Oasis Sapphire')
+      return true
+    } catch {
+      setContractConfigured(false)
+      setContractCheckMessage('Không thể xác minh contract từ RPC')
+      return false
+    }
+  }, [])
+
+  const withContractSigner = useCallback(async () => {
+    if (!window.ethereum) {
+      throw new Error('Không có provider ví trong trình duyệt')
+    }
+    if (!contractConfigured) {
+      throw new Error(contractCheckMessage)
+    }
+
+    const wrappedProvider = sapphire.wrapEthereumProvider(window.ethereum as any)
+    const browserProvider = new ethers.BrowserProvider(wrappedProvider)
+    const signer = await browserProvider.getSigner()
+    const contract = new ethers.Contract(CONTRACT_ADDRESS, squarexoMatchAbi, signer)
+    return { contract, browserProvider }
+  }, [contractCheckMessage, contractConfigured])
+
+  const refreshWalletBalance = useCallback(async () => {
+    if (!window.ethereum) {
+      return
+    }
+
+    const provider = new ethers.BrowserProvider(window.ethereum)
+    const signer = await provider.getSigner()
+    const address = await signer.getAddress()
+    const balanceWei = await provider.getBalance(address)
+    setWalletBalance(ethers.formatEther(balanceWei))
+  }, [])
+
+  const lockStakeOnChain = useCallback(
+    async (targetRoomId: string, mode: 'create' | 'join') => {
+      const amount = stakeEthRef.current
+      if (amount <= 0) {
+        throw new Error('Stake phải lớn hơn 0')
+      }
+
+      if (!contractConfigured) {
+        throw new Error(contractCheckMessage)
+      }
+
+      const value = ethers.parseEther(amount.toString())
+      const { contract } = await withContractSigner()
+
+      setChainStatus('staking')
+      const tx =
+        mode === 'create'
+          ? await contract.createMatch(targetRoomId, value, { value })
+          : await contract.joinMatch(targetRoomId, { value })
+      await tx.wait()
+      await refreshWalletBalance()
+      setChainStatus('playing')
+      return String(tx.hash)
+    },
+    [contractCheckMessage, contractConfigured, refreshWalletBalance, withContractSigner],
+  )
+
+  const claimReward = useCallback(async () => {
+    try {
+      const { contract } = await withContractSigner()
+      const tx = await contract.claimReward(roomCodeRef.current)
+      await tx.wait()
+      await refreshWalletBalance()
+      showToast(`Claim reward thành công: ${String(tx.hash).slice(0, 10)}...`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Claim reward thất bại'
+      showToast(message)
+    }
+  }, [refreshWalletBalance, showToast, withContractSigner])
+
+  const createRoom = useCallback(() => {
+    const run = async () => {
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before creating an online room')
+        return
+      }
+      if (!walletConnected) {
+        showToast('Hãy kết nối ví trước khi tạo phòng cược')
+        return
+      }
+
+      const code = genRoomCode()
+      try {
+        const txHash = await lockStakeOnChain(code, 'create')
+        showToast(`Stake thành công: ${txHash.slice(0, 10)}...`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không stake được khi tạo phòng'
+        showToast(message)
+        setChainStatus('idle')
+        return
+      }
+
+      setRoomCodeSafe(code)
+      setRematchPending(false)
+      updateRoomPlayers(1)
+      setRoomChat([
+        { id: 1, user: 'System', msg: `Phòng ${code} đã được tạo. Chia sẻ mã để đối thủ tham gia.` },
+      ])
+      setRoomCountdown(null)
+      setGameMode('pvp')
+      setScreen('waiting')
+      setIsOnlineMatch(true)
+      void joinOnlineRoom(code)
+    }
+
+    void run()
+  }, [authUser, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
+
+  const joinRoom = useCallback(() => {
+    const run = async () => {
+      if (!joinCode.trim()) {
+        showToast('Nhập mã phòng!')
+        return
+      }
+      if (!walletConnected) {
+        showToast('Hãy kết nối ví trước khi vào phòng cược')
+        return
+      }
+
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before joining an online room')
+        return
+      }
+
+      const code = joinCode.trim().toUpperCase()
+      try {
+        const txHash = await lockStakeOnChain(code, 'join')
+        showToast(`Đã stake khi vào phòng: ${txHash.slice(0, 10)}...`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không stake được khi vào phòng'
+        showToast(message)
+        setChainStatus('idle')
+        return
+      }
+
+      setRoomCodeSafe(code)
+      setRematchPending(false)
+      updateRoomPlayers(1)
+      setRoomChat([
+        { id: 1, user: 'System', msg: `Đã tham gia phòng ${code}.` },
+        { id: 2, user: 'System', msg: 'Đang đồng bộ với server...' },
+      ])
+      setJoinCode('')
+      setGameMode('pvp')
+      setScreen('waiting')
+      setIsOnlineMatch(true)
+      void joinOnlineRoom(code)
+    }
+
+    void run()
+  }, [authUser, joinCode, joinOnlineRoom, lockStakeOnChain, setRoomCodeSafe, showToast, updateRoomPlayers, walletConnected])
+
+  const sendChat = useCallback(() => {
+    const message = chatMsg.trim()
+    if (!message) return
+
+    if (isOnlineMatch && onlineConnected && socketRef.current && roomCode) {
+      socketRef.current.emit('chat_message', {
+        roomId: roomCode,
+        message,
+      })
+    } else {
+      setRoomChat((prev) => [...prev, { id: Date.now(), user: 'Bạn', msg: message }])
+    }
+
+    setChatMsg('')
+  }, [chatMsg, isOnlineMatch, onlineConnected, roomCode])
+
+  const connectWallet = useCallback(() => {
+    const connect = async () => {
+      if (!getAccessToken() || !authUser) {
+        showToast('Please log in before linking a wallet')
+        return
+      }
+      if (!window.ethereum) {
+        showToast('Không tìm thấy MetaMask/WalletConnect provider trong trình duyệt')
+        return
+      }
+
+      setWalletPending(true)
+      try {
+        let browserProvider = new ethers.BrowserProvider(window.ethereum)
+        let network = await browserProvider.getNetwork()
+
+        if (network.chainId !== OASIS_CHAIN_ID) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: OASIS_CHAIN_HEX }],
+            })
+          } catch {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: OASIS_CHAIN_HEX,
+                  chainName: OASIS_CHAIN_NAME,
+                  nativeCurrency: {
+                    name: OASIS_CONFIG.currencyName,
+                    symbol: 'ROSE',
+                    decimals: 18,
+                  },
+                  rpcUrls: OASIS_CONFIG.rpcUrls,
+                  blockExplorerUrls: OASIS_CONFIG.blockExplorerUrls,
+                },
+              ],
+            })
+          }
+          browserProvider = new ethers.BrowserProvider(window.ethereum)
+          network = await browserProvider.getNetwork()
+        }
+
+        if (network.chainId !== OASIS_CHAIN_ID) {
+          throw new Error(`Network chưa được chuyển sang ${OASIS_CHAIN_NAME}`)
+        }
+
+        await window.ethereum.request({ method: 'eth_requestAccounts' })
+        const signer = await browserProvider.getSigner()
+        const address = await signer.getAddress()
+        const balanceWei = await browserProvider.getBalance(address)
+        const normalizedAddress = address.toLowerCase()
+
+        const linkedUser = await linkWalletToBackend(address)
+        const nextAuthUser: User = {
+          id: linkedUser.id,
+          username: linkedUser.username,
+          email: linkedUser.email,
+          walletAddress: linkedUser.walletAddress,
+          avatar: authUser?.avatar ?? 'ðŸŽ®',
+          joinedDate: linkedUser.createdAt ? new Date(linkedUser.createdAt).toLocaleDateString('vi-VN') : authUser?.joinedDate,
+        }
+        setAuthUser(nextAuthUser)
+        localStorage.setItem('dbAuthUser', JSON.stringify(nextAuthUser))
+
+        try {
+          await syncPendingHistoryToServer(normalizedAddress)
+        } catch (error) {
+          console.error('Failed to sync pending history', error)
+        }
+
+        try {
+          const remoteHistory = await fetchHistoryFromServer(normalizedAddress)
+          if (remoteHistory.length > 0) {
+            setGameHistory(remoteHistory)
+            saveLocalHistory(remoteHistory)
+          }
+        } catch (error) {
+          console.error('Failed to fetch history from server', error)
+        }
+
+        setWalletConnected(true)
+        setWalletAccount(normalizedAddress)
+        setWalletAddress(formatWalletLabel(address))
+        setWalletBalance(ethers.formatEther(balanceWei))
+        await checkContractConfiguration()
+        showToast(`Kết nối ví thành công trên ${OASIS_CHAIN_NAME}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Không thể kết nối ví'
+        showToast(message)
+      } finally {
+        setWalletPending(false)
+      }
+    }
+
+    void connect()
+  }, [authUser, checkContractConfiguration, fetchHistoryFromServer, saveLocalHistory, showToast, syncPendingHistoryToServer])
+
+  useEffect(() => {
+    const ethereum = window.ethereum
+    if (!ethereum?.on || !ethereum.removeListener) {
+      return
+    }
+
+    const onAccountsChanged = (accounts: unknown) => {
+      if (!Array.isArray(accounts) || accounts.length === 0 || typeof accounts[0] !== 'string') {
+        setWalletConnected(false)
+        setWalletAccount(null)
+        setWalletAddress('Chưa kết nối')
+        setWalletBalance('0.0000')
+        return
+      }
+
+      const account = accounts[0].toLowerCase()
+      const linkedWallet = authUser?.walletAddress?.toLowerCase()
+      if (linkedWallet && linkedWallet !== account) {
+        setWalletConnected(false)
+        setWalletAccount(null)
+        setWalletAddress('Wallet changed')
+        setWalletBalance('0.0000')
+        showToast('Detected a different wallet. Please reconnect the linked wallet.')
+        return
+      }
+
+      setWalletConnected(true)
+      setWalletAccount(account)
+      setWalletAddress(formatWalletLabel(account))
+      void refreshWalletBalance()
+    }
+
+    const onChainChanged = (_chainIdHex: unknown) => {
+      void refreshWalletBalance()
+    }
+
+    ethereum.on('accountsChanged', onAccountsChanged)
+    ethereum.on('chainChanged', onChainChanged)
+
+    return () => {
+      ethereum.removeListener?.('accountsChanged', onAccountsChanged)
+      ethereum.removeListener?.('chainChanged', onChainChanged)
+    }
+  }, [authUser, refreshWalletBalance, showToast])
+
+  useEffect(() => {
+    void checkContractConfiguration()
+  }, [checkContractConfiguration])
 
   const playAgain = useCallback(() => {
+    if (isOnlineMatch && socketRef.current && roomCodeRef.current) {
+      socketRef.current.emit('rematch_request', { roomId: roomCodeRef.current })
+      setRematchPending(true)
+      return
+    }
+
     setModalState((prev) => ({ ...prev, open: false }))
     startGame()
-  }, [startGame])
+  }, [isOnlineMatch, startGame])
 
   const onCanvasMouseMove = useCallback(
     (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -716,9 +1746,47 @@ function App() {
         line.type === 'h' ? hLinesRef.current[line.r][line.c] : vLinesRef.current[line.r][line.c]
       if (taken) return
 
+      if (isOnlineMatch) {
+        const socket = socketRef.current
+        if (!socket || !onlineConnected) {
+          showToast('Mất kết nối server realtime')
+          return
+        }
+        if (!onlineAssignedPlayer) {
+          showToast('Bạn đang là spectator, chưa có quyền đánh')
+          return
+        }
+
+        const expectedTurn = onlineAssignedPlayer === 'X' ? 1 : 2
+        if (currentPlayerRef.current !== expectedTurn) {
+          showToast('Chưa tới lượt của bạn')
+          return
+        }
+
+        const edge =
+          line.type === 'h'
+            ? {
+                from: { row: line.r, col: line.c },
+                to: { row: line.r, col: line.c + 1 },
+              }
+            : {
+                from: { row: line.r, col: line.c },
+                to: { row: line.r + 1, col: line.c },
+              }
+
+        clientSequenceRef.current += 1
+        socket.emit('make_move', {
+          roomId: roomCode,
+          actionId: `${clientPlayerIdRef.current}-${Date.now()}-${clientSequenceRef.current}`,
+          clientSequence: clientSequenceRef.current,
+          edge,
+        })
+        return
+      }
+
       applyMove(line)
     },
-    [applyMove, getLineFromPos],
+    [applyMove, getLineFromPos, isOnlineMatch, onlineAssignedPlayer, onlineConnected, roomCode, showToast],
   )
 
   const totalEth = useMemo(() => {
@@ -737,6 +1805,127 @@ function App() {
   const toggleTheme = useCallback(() => {
     setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))
   }, [])
+
+  const handleLogin = useCallback(() => {
+    if (!loginForm.username || !loginForm.password) {
+      setAuthError('Vui lòng nhập đầy đủ thông tin')
+      return
+    }
+    setAuthError('')
+    setAuthLoading(true)
+
+    void loginWithBackend(loginForm.username, loginForm.password)
+      .then(({ user: apiUser }) => {
+        const user: User = {
+          id: apiUser.id,
+          username: apiUser.username,
+          email: apiUser.email,
+          walletAddress: apiUser.walletAddress,
+          avatar: '🎮',
+          joinedDate: apiUser.createdAt ? new Date(apiUser.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+        setAuthUser(user)
+        localStorage.setItem('dbAuthUser', JSON.stringify(user))
+        setLoginForm({ username: '', password: '' })
+        setScreen('home')
+        setAuthLoading(false)
+        showToast('Đăng nhập thành công!')
+      })
+      .catch((error: unknown) => {
+        setAuthLoading(false)
+        setAuthError(error instanceof Error ? error.message : 'Đăng nhập thất bại')
+      })
+    return
+
+    // Mock login
+    window.setTimeout(() => {
+      const user: User = {
+        id: `user_${Date.now()}`,
+        username: loginForm.username,
+        email: `${loginForm.username}@chain.io`,
+        avatar: '🎮',
+        joinedDate: '01/01/2025',
+      }
+      setAuthUser(user)
+      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      setLoginForm({ username: '', password: '' })
+      setScreen('home')
+      setAuthLoading(false)
+      showToast('Đăng nhập thành công!')
+    }, 800)
+  }, [loginForm, showToast])
+
+  const handleRegister = useCallback(() => {
+    if (!registerForm.username || !registerForm.email || !registerForm.password || !registerForm.confirm) {
+      setAuthError('Vui lòng nhập đầy đủ thông tin')
+      return
+    }
+    if (registerForm.password !== registerForm.confirm) {
+      setAuthError('Mật khẩu không trùng khớp')
+      return
+    }
+    if (registerForm.password.length < 6) {
+      setAuthError('Mật khẩu phải có ít nhất 6 ký tự')
+      return
+    }
+    setAuthError('')
+    setAuthLoading(true)
+
+    void registerWithBackend(registerForm.username, registerForm.email, registerForm.password)
+      .then(({ user: apiUser }) => {
+        const user: User = {
+          id: apiUser.id,
+          username: apiUser.username,
+          email: apiUser.email,
+          avatar: '🎮',
+          joinedDate: apiUser.createdAt ? new Date(apiUser.createdAt).toLocaleDateString('vi-VN') : undefined,
+        }
+        setAuthUser(user)
+        localStorage.setItem('dbAuthUser', JSON.stringify(user))
+        setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+        setScreen('home')
+        setAuthLoading(false)
+        showToast('Đăng ký thành công!')
+      })
+      .catch((error: unknown) => {
+        setAuthLoading(false)
+        setAuthError(error instanceof Error ? error.message : 'Đăng ký thất bại')
+      })
+    return
+
+    // Mock register
+    window.setTimeout(() => {
+      const user: User = {
+        id: `user_${Date.now()}`,
+        username: registerForm.username,
+        email: registerForm.email,
+        avatar: '🎮',
+        joinedDate: new Date().toLocaleDateString('vi-VN'),
+      }
+      setAuthUser(user)
+      localStorage.setItem('dbAuthUser', JSON.stringify(user))
+      setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+      setScreen('home')
+      setAuthLoading(false)
+      showToast('Đăng ký thành công!')
+    }, 800)
+  }, [registerForm, showToast])
+
+  const handleLogout = useCallback(() => {
+    logoutFromBackend()
+    setAuthUser(null)
+    setWalletConnected(false)
+    setWalletAccount(null)
+    setWalletAddress('ChÆ°a káº¿t ná»‘i')
+    setWalletBalance('0.0000')
+    localStorage.removeItem('dbAuthUser')
+    setScreen('auth')
+    setAuthTab('login')
+    setLoginForm({ username: '', password: '' })
+    setRegisterForm({ username: '', email: '', password: '', confirm: '' })
+    setAuthError('')
+    showToast('Đã đăng xuất')
+  }, [showToast])
 
   useEffect(() => {
     gridSizeRef.current = gridSize
@@ -775,11 +1964,12 @@ function App() {
   useEffect(() => {
     return () => {
       clearTimers()
+      disconnectOnlineSocket()
       if (toastTimeoutRef.current) {
         window.clearTimeout(toastTimeoutRef.current)
       }
     }
-  }, [clearTimers])
+  }, [clearTimers, disconnectOnlineSocket])
 
   return (
     <div className="db-app">
@@ -790,13 +1980,15 @@ function App() {
         <div className="orb orb3" />
       </div>
 
-      {screen !== 'home' && (
+      {screen !== 'home' && screen !== 'auth' && (
         <nav className="nav-bar">
           <div className="nav-logo">D&amp;B // CHAIN</div>
           <div className="nav-links">
             <button className="btn-ghost" onClick={toggleTheme}>
               {themeMode === 'dark' ? '☀ Sáng' : '🌙 Tối'}
             </button>
+            <button className="btn-ghost" onClick={openProfile}>Hồ Sơ</button>
+            <button className="btn-ghost" onClick={openSettings}>Cài đặt</button>
             <button className="btn-ghost" onClick={goHome}>Home</button>
             <button className="btn-ghost" onClick={showHistory}>Lịch Sử</button>
           </div>
@@ -804,8 +1996,138 @@ function App() {
       )}
 
       <div className="wrap">
+        {screen === 'auth' && (
+          <section className="screen active" id="authScreen">
+            <div className="auth-card">
+              <div className="logo-wrap">
+                <div className="logo-title">DOTS &amp; BOXES</div>
+                <div className="logo-sub">BLOCKCHAIN EDITION</div>
+              </div>
+
+              <div className="auth-tabs">
+                <button
+                  className={`auth-tab ${authTab === 'login' ? 'active' : ''}`}
+                  onClick={() => { setAuthTab('login'); setAuthError('') }}
+                >
+                  ĐĂNG NHẬP
+                </button>
+                <button
+                  className={`auth-tab ${authTab === 'register' ? 'active' : ''}`}
+                  onClick={() => { setAuthTab('register'); setAuthError('') }}
+                >
+                  ĐĂNG KÝ
+                </button>
+              </div>
+
+              {authTab === 'login' && (
+                <div className="auth-form">
+                  <div className="form-group">
+                    <label>TÊN NGƯỜI DÙNG</label>
+                    <input
+                      type="text"
+                      placeholder="username"
+                      value={loginForm.username}
+                      onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>MẬT KHẨU</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={loginForm.password}
+                      onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                      disabled={authLoading}
+                      onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                    />
+                  </div>
+                  {authError && <div className="auth-error">{authError}</div>}
+                  <button
+                    className="btn-primary"
+                    onClick={handleLogin}
+                    disabled={authLoading}
+                  >
+                    {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG NHẬP'}
+                  </button>
+                  <div className="auth-demo">
+                    Demo: <span className="demo-link">demo / demo123</span>
+                  </div>
+                </div>
+              )}
+
+              {authTab === 'register' && (
+                <div className="auth-form">
+                  <div className="form-group">
+                    <label>TÊN NGƯỜI DÙNG</label>
+                    <input
+                      type="text"
+                      placeholder="username"
+                      value={registerForm.username}
+                      onChange={(e) => setRegisterForm({ ...registerForm, username: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>EMAIL</label>
+                    <input
+                      type="email"
+                      placeholder="email@example.com"
+                      value={registerForm.email}
+                      onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>MẬT KHẨU</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={registerForm.password}
+                      onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
+                      disabled={authLoading}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>XÁC NHÂN MẬT KHẨU</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={registerForm.confirm}
+                      onChange={(e) => setRegisterForm({ ...registerForm, confirm: e.target.value })}
+                      disabled={authLoading}
+                      onKeyPress={(e) => e.key === 'Enter' && handleRegister()}
+                    />
+                  </div>
+                  {authError && <div className="auth-error">{authError}</div>}
+                  <button
+                    className="btn-primary"
+                    onClick={handleRegister}
+                    disabled={authLoading}
+                  >
+                    {authLoading ? '⏳ Đang xử lý...' : '⚡ ĐĂNG KÝ'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {screen === 'home' && (
           <section className="screen active" id="homeScreen">
+            <div className="home-header">
+              <div className="user-profile">
+                <div className="user-avatar">{authUser?.avatar || '🎮'}</div>
+                <div className="user-info">
+                  <div className="user-name">{authUser?.username}</div>
+                  <div className="user-email">{authUser?.email}</div>
+                </div>
+                <button className="btn-profile" onClick={openProfile}>Hồ Sơ</button>
+                <button className="btn-logout" onClick={handleLogout} title="Đăng xuất">
+                  🚪
+                </button>
+              </div>
+            </div>
             <div className="logo-wrap">
               <div className="logo-title">DOTS &amp; BOXES</div>
               <div className="logo-sub">Blockchain Edition // Testnet</div>
@@ -819,15 +2141,14 @@ function App() {
                 <button
                   className="btn-ghost connect-btn"
                   onClick={connectWallet}
-                  disabled={walletConnected}
+                  disabled={walletConnected || walletPending}
                 >
-                  {walletConnected ? '✓ Đã kết nối' : 'Kết Nối'}
+                  {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
                 </button>
               </div>
               {walletConnected && (
                 <div className="wallet-balance">
-                  Số dư: <span className="balance-val">{walletBalance}</span> ETH &nbsp;·&nbsp; Ví:{' '}
-                  <span className="network-val">Sepolia</span>
+                  Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
                 </div>
               )}
             </div>
@@ -835,13 +2156,13 @@ function App() {
             <div className="config-card">
               <div className="config-title">⬡ Cấu Hình Ván Chơi</div>
 
-              <div className="config-row">
+              <div className="row">
                 <label>Kích Thước Bảng</label>
                 <div className="size-btns">
                   {[3, 4, 5, 6].map((size) => (
                     <button
                       key={size}
-                      className={`size-btn ${gridSize === size ? 'active' : ''}`}
+                      className={`sz-btn ${gridSize === size ? 'on' : ''}`}
                       onClick={() => setGridSize(size)}
                     >
                       {size}×{size}
@@ -850,136 +2171,355 @@ function App() {
                 </div>
               </div>
 
-              <div className="config-row">
-                <label>Stake (ETH)</label>
-                <div className="stake-input-wrap">
+              <div className="row">
+                <label>Stake (ROSE)</label>
+                <div className="stake-wrap">
                   <input
-                    className="stake-input"
+                    className="stake-inp"
                     type="number"
                     min="0"
                     step="0.001"
+                    title="Stake amount in ROSE"
+                    placeholder="0.001"
                     value={stakeEth}
-                    onChange={(e) => {
-                      const value = Number.parseFloat(e.target.value)
-                      setStakeEth(Number.isFinite(value) ? value : 0)
-                    }}
+                    onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
                   />
-                  <span className="stake-unit">ETH</span>
+                  <span className="stake-unit">ROSE</span>
                 </div>
               </div>
 
-              <div className="config-row">
+              <div className="row">
                 <label>Chế Độ Chơi</label>
                 <div className="mode-btns">
-                  <button
-                    className={`mode-btn ${gameMode === 'pvp' ? 'active' : ''}`}
-                    onClick={() => setGameMode('pvp')}
-                  >
+                  <button className={`md-btn ${gameMode === 'pvp' ? 'on' : ''}`} onClick={() => setGameMode('pvp')}>
                     👥 PvP Local
                   </button>
-                  <button
-                    className={`mode-btn ${gameMode === 'ai' ? 'active' : ''}`}
-                    onClick={() => setGameMode('ai')}
-                  >
+                  <button className={`md-btn ${gameMode === 'ai' ? 'on' : ''}`} onClick={() => setGameMode('ai')}>
                     🤖 vs AI
                   </button>
                 </div>
               </div>
+            </div>
 
-              <div className="config-row">
-                <label>Chế Độ Nền</label>
-                <div className="mode-btns">
+            <button className="btn-primary" onClick={startGame}>⚡ BẮT ĐẦU VÁN CHƠI</button>
+
+            <div className="room-btns">
+              <button className="room-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
+              <button className="btn-ghost home-history-btn" onClick={showHistory}>📋 Lịch Sử</button>
+              <button className="btn-ghost" onClick={openSettings}>⚙</button>
+            </div>
+          </section>
+        )}
+
+        {screen === 'settings' && (
+          <section className="screen settings-screen">
+            <div className="settings-modal">
+              <div className="settings-header">
+                <div className="settings-title">⚙ CÀI ĐẶT</div>
+                <button className="btn-ghost settings-close" onClick={closeSettings}>✕ Đóng</button>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-label">Giao Diện</div>
+                <div className="settings-item-row">
+                  <span>Chế độ tối</span>
                   <button
-                    className={`mode-btn ${themeMode === 'light' ? 'active' : ''}`}
-                    onClick={() => setThemeMode('light')}
+                    className={`theme-switch ${themeMode === 'dark' ? 'on' : ''}`}
+                    onClick={toggleTheme}
+                    aria-label="Bật tắt chế độ tối"
                   >
-                    ☀ Sáng
+                    <span className="theme-switch-dot" />
                   </button>
-                  <button
-                    className={`mode-btn ${themeMode === 'dark' ? 'active' : ''}`}
-                    onClick={() => setThemeMode('dark')}
-                  >
-                    🌙 Tối
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-label">Kích Thước Bảng</div>
+                <div className="settings-desc">Hiện tại: {gridSize}×{gridSize}</div>
+                <div className="size-btns">
+                  {[3, 4, 5, 6].map((size) => (
+                    <button
+                      key={size}
+                      className={`sz-btn ${gridSize === size ? 'on' : ''}`}
+                      onClick={() => setGridSize(size)}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-label">Chế Độ Chơi</div>
+                <div className="settings-desc">{gameMode === 'pvp' ? 'Người vs Người' : 'Người vs AI'}</div>
+                <div className="mode-btns">
+                  <button className={`md-btn ${gameMode === 'pvp' ? 'on' : ''}`} onClick={() => setGameMode('pvp')}>
+                    PvP
+                  </button>
+                  <button className={`md-btn ${gameMode === 'ai' ? 'on' : ''}`} onClick={() => setGameMode('ai')}>
+                    AI
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-nav-title">CHUYỂN MÀN HÌNH</div>
+              <div className="settings-nav-list">
+                <button className="settings-nav-btn" onClick={goHome}>🏠 Trang Chủ</button>
+                <button className="settings-nav-btn" onClick={openProfile}>👤 Trang Cá Nhân</button>
+                <button className="settings-nav-btn" onClick={() => setScreen('game')}>🎮 Ván Chơi</button>
+                <button className="settings-nav-btn" onClick={() => setScreen('room')}>🚪 Tạo / Vào Phòng</button>
+                <button className="settings-nav-btn" onClick={showHistory}>📋 Lịch Sử On-Chain</button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {screen === 'profile' && (
+          <section className="screen profile-screen">
+            <div className="profile-card">
+              <div className="profile-head">
+                <div className="profile-avatar">{authUser?.avatar || '🎮'}</div>
+                <div>
+                  <div className="profile-name">{authUser?.username || 'Người Chơi'}</div>
+                  <div className="profile-email">{authUser?.email || 'no-email@chain.io'}</div>
+                  <div className="profile-id">ID: {authUser?.id || 'guest'}</div>
+                </div>
+              </div>
+
+              <div className="profile-grid">
+                <div className="profile-stat">
+                  <div className="profile-stat-value">{gameHistory.length}</div>
+                  <div className="profile-stat-label">Ván Đã Chơi</div>
+                </div>
+                <div className="profile-stat">
+                  <div className="profile-stat-value">{winRate}%</div>
+                  <div className="profile-stat-label">Tỉ Lệ Thắng X</div>
+                </div>
+                <div className="profile-stat">
+                  <div className="profile-stat-value">{totalEth.toFixed(3)}</div>
+                  <div className="profile-stat-label">Tổng Stake ROSE</div>
+                </div>
+              </div>
+
+              <div className="profile-wallet-card">
+                <div className="profile-wallet-title">⬡ Ví Blockchain</div>
+                <div className="profile-wallet-row">
+                  <span className={`wallet-dot ${walletConnected ? 'connected' : ''}`} />
+                  <span className="profile-wallet-address">{walletAddress}</span>
+                  <button className="btn-ghost profile-wallet-btn" onClick={connectWallet} disabled={walletConnected || walletPending}>
+                    {walletConnected ? '✓ Đã kết nối' : walletPending ? 'Đang kết nối...' : 'Kết Nối'}
+                  </button>
+                </div>
+                <div className="profile-wallet-meta">
+                  {walletConnected ? (
+                    <>
+                      Số dư: <span className="balance-val">{Number.parseFloat(walletBalance || '0').toFixed(4)}</span> ROSE · <span className="network-val">Sapphire Testnet</span>
+                    </>
+                  ) : (
+                    'Chưa kết nối ví'
+                  )}
+                </div>
+              </div>
+
+              <div className="profile-section">
+                <div className="profile-section-title">Thông Tin Tài Khoản</div>
+                <div className="profile-row"><span>Tham gia từ</span><strong>{authUser?.joinedDate || 'N/A'}</strong></div>
+                <div className="profile-row"><span>Chế độ ưa thích</span><strong>{gameMode === 'ai' ? 'Vs AI' : 'PvP Local'}</strong></div>
+                <div className="profile-row"><span>Kích thước bàn mặc định</span><strong>{gridSize}x{gridSize}</strong></div>
+                <div className="profile-row"><span>Theme</span><strong>{themeMode === 'dark' ? 'Dark Neon' : 'Light Neon'}</strong></div>
+              </div>
+
+              <div className="profile-actions">
+                <button className="btn-ghost" onClick={goHome}>🏠 Trang Chủ</button>
+                <button className="btn-ghost" onClick={openSettings}>⚙ Cài Đặt</button>
+                <button className="btn-primary" onClick={startGame}>⚡ Bắt Đầu Ngay</button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {screen === 'room' && (
+          <section className="screen room-screen">
+            <div className="room-shell">
+              <div className="room-header-row">
+                <button className="btn-ghost" onClick={goHome}>← Quay lại</button>
+                <div className="room-header-title">Phòng Chơi Online</div>
+              </div>
+
+              <div className="card room-card">
+                <div className="card-title">🚪 Tạo Phòng Mới</div>
+                <p className="room-desc">
+                  Tạo phòng riêng và chia sẻ mã cho đối thủ để bắt đầu ván đấu.
+                </p>
+                <div className="row">
+                  <label>Kích Thước Bảng</label>
+                  <div className="size-btns">
+                    {[3, 4, 5, 6].map((size) => (
+                      <button key={size} className={`sz-btn ${gridSize === size ? 'on' : ''}`} onClick={() => setGridSize(size)}>
+                        {size}×{size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="row">
+                  <label>Stake (ROSE)</label>
+                  <div className="stake-wrap">
+                    <input
+                      className="stake-inp"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      title="Stake amount in ROSE"
+                      placeholder="0.001"
+                      value={stakeEth}
+                      onChange={(e) => setStakeEth(Number.parseFloat(e.target.value) || 0)}
+                    />
+                    <span className="stake-unit">ROSE</span>
+                  </div>
+                </div>
+                <div className="room-contract-status">{contractCheckMessage}</div>
+                <button className="btn-primary room-create-btn" onClick={createRoom} disabled={!contractConfigured}>⚡ TẠO PHÒNG</button>
+              </div>
+
+              <div className="room-divider-row">
+                <div className="room-divider-line" />
+                <span>HOẶC</span>
+                <div className="room-divider-line" />
+              </div>
+
+              <div className="card room-card">
+                <div className="card-title">🔑 Vào Phòng</div>
+                <p className="room-desc">
+                  Nhập mã phòng 6 ký tự để tham gia ván đấu.
+                </p>
+                <div className="join-row">
+                  <input
+                    className="join-inp"
+                    placeholder="XXXXXX"
+                    value={joinCode}
+                    maxLength={6}
+                    onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
+                  />
+                  <button className="btn-primary room-join-btn" onClick={joinRoom} disabled={!contractConfigured}>
+                    Vào →
                   </button>
                 </div>
               </div>
             </div>
+          </section>
+        )}
 
-            <button className="btn-primary" onClick={startGame}>
-              ⚡ BẮT ĐẦU VÁN CHƠI
-            </button>
+        {screen === 'waiting' && (
+          <section className="screen waiting-screen">
+            <div className="waiting-title">Phòng Chờ</div>
 
-            <button className="btn-ghost history-btn" onClick={showHistory}>
-              📋 Xem Lịch Sử On-chain
-            </button>
+            <div className="room-code-box">
+              <div className="code-label">Mã Phòng</div>
+              <div className="code-val">{roomCode}</div>
+              <div className="code-hint">Chia sẻ mã này cho đối thủ</div>
+              <div className="players-row">
+                <div className="player-slot">
+                  <div className="slot-avatar p1">X</div>
+                  <div className="slot-name">Bạn</div>
+                </div>
+                <div className="vs-sep">VS</div>
+                <div className="player-slot">
+                  <div className={`slot-avatar ${roomPlayers >= 2 ? 'p2' : 'empty'}`}>
+                    {roomPlayers >= 2 ? 'O' : '?'}
+                  </div>
+                  <div className="slot-name">{roomPlayers >= 2 ? 'Đối thủ' : 'Đang chờ...'}</div>
+                </div>
+              </div>
+            </div>
+
+            {roomCountdown !== null ? (
+              <div key={roomCountdown} className="countdown">{roomCountdown}</div>
+            ) : (
+              <div className="waiting-label">⏳ Đang chờ đối thủ...</div>
+            )}
+
+            <div className="chat-box">
+              <div className="chat-header">💬 Chat Phòng</div>
+              <div className="chat-messages">
+                {roomChat.map((msg) => (
+                  <div key={msg.id} className="chat-msg">
+                    <span className={`user ${msg.user === 'System' ? 'sys' : msg.user === 'Bạn' ? 'you' : 'opp'}`}>
+                      {msg.user}:
+                    </span>
+                    {msg.msg}
+                  </div>
+                ))}
+              </div>
+              <div className="chat-send">
+                <input
+                  className="chat-inp"
+                  placeholder="Nhắn tin..."
+                  value={chatMsg}
+                  onChange={(e) => setChatMsg(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendChat()}
+                />
+                <button className="chat-send-btn" onClick={sendChat}>Gửi</button>
+              </div>
+            </div>
+
+            <button className="btn-ghost" onClick={goHome}>← Thoát Phòng</button>
           </section>
         )}
 
         {screen === 'game' && (
-          <section className="screen active game-screen" id="gameScreen">
+          <section className="screen game-screen" id="gameScreen">
             <div className="scoreboard">
-              <div className={`player-card ${currentPlayer === 1 ? 'active' : ''}`} id="p1Card">
-                <div className="player-name">
-                  NGƯỜI CHƠI <span className="player-color">X</span>
-                </div>
-                <div className="player-score score-p1">{scores[0]}</div>
-                <div className="player-boxes">{scores[0]} ô</div>
+              <div className={`p-card ${currentPlayer === 1 ? 'active' : ''}`} id="p1Card">
+                <div className="p-name">NGƯỜI CHƠI <span className="player-color">X</span></div>
+                <div className="p-score score-p1">{scores[0]}</div>
+                <div className="p-boxes">{scores[0]} ô</div>
               </div>
-              <div className="vs-badge">VS</div>
-              <div className={`player-card p2 ${currentPlayer === 2 ? 'active' : ''}`} id="p2Card">
-                <div className="player-name">
+              <div className="vs">VS</div>
+              <div className={`p-card p2 ${currentPlayer === 2 ? 'active' : ''}`} id="p2Card">
+                <div className="p-name">
                   {gameMode === 'ai' ? 'AI' : 'NGƯỜI CHƠI'} <span className="player-color player-p2">O</span>
                 </div>
-                <div className="player-score score-p2">{scores[1]}</div>
-                <div className="player-boxes">{scores[1]} ô</div>
+                <div className="p-score score-p2">{scores[1]}</div>
+                <div className="p-boxes">{scores[1]} ô</div>
               </div>
             </div>
 
-            <div className="chain-ticker">
-              <div className="ticker-item">
-                <span className="ticker-label">Block</span>
-                <span className="ticker-val green">#{blockNum.toLocaleString()}</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Stake</span>
-                <span className="ticker-val gold">{stakeEth.toFixed(3)} ETH</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Gas</span>
-                <span className="ticker-val pink">12 gwei</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Moves</span>
-                <span className="ticker-val green">{totalMoves}</span>
-              </div>
-              <span className="ticker-sep">|</span>
-              <div className="ticker-item">
-                <span className="ticker-label">Contract</span>
-                <span className="ticker-val contract">0x4a2f...c3e1</span>
-              </div>
+            <div className="ticker">
+              <div className="ticker-item"><span className="t-lbl">Block</span><span className="t-val green">#{blockNum.toLocaleString()}</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Stake</span><span className="t-val gold">{stakeEth.toFixed(3)} ROSE</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Gas</span><span className="t-val pink">12 gwei</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Moves</span><span className="t-val green">{totalMoves}</span></div>
+              <span className="t-sep">|</span>
+              <div className="ticker-item"><span className="t-lbl">Contract</span><span className="t-val contract">{contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'Chưa sẵn sàng'}</span></div>
             </div>
+
+            {isOnlineMatch && chainStatus === 'settled' && (
+              <div className="claim-reward-wrap">
+                <button className="btn-ghost" onClick={() => void claimReward()}>
+                  Claim Reward On-chain
+                </button>
+              </div>
+            )}
 
             <div className="turn-pill">
               Lượt:{' '}
-              <span style={{ color: currentPlayer === 1 ? 'var(--p1)' : 'var(--p2)' }}>
+              <span className={currentPlayer === 1 ? 'turn-pill-highlight turn-pill-highlight-p1' : 'turn-pill-highlight turn-pill-highlight-p2'}>
                 {currentPlayer === 1 ? 'X' : gameMode === 'ai' ? 'AI (O) 🤖' : 'O'}
-              </span>
+              </span>{' '}
+              · {gameActive ? 'Đang chơi' : 'Kết thúc'}
             </div>
 
-            <div className="board-wrap">
+            <div className="board-wrap board-wrap--game">
               <canvas
+                className={`game-board-canvas ${hoveredLine ? 'game-board-canvas--hover' : ''}`}
                 id="gameBoard"
                 ref={canvasRef}
                 width={canvasSize}
                 height={canvasSize}
-                style={{
-                  width: `${canvasSize}px`,
-                  height: `${canvasSize}px`,
-                  cursor: hoveredLine ? 'pointer' : 'default',
-                }}
                 onMouseMove={onCanvasMouseMove}
                 onMouseLeave={() => setHoveredLine(null)}
                 onClick={onCanvasClick}
@@ -988,38 +2528,30 @@ function App() {
 
             <div className="game-actions">
               <button className="btn-ghost" onClick={goHome}>← Thoát</button>
-              <button className="btn-ghost" onClick={undoMove} disabled={!gameActive}>↩ Hoàn Tác</button>
-              <button className="btn-primary forfeit-btn" onClick={confirmForfeit} disabled={!gameActive}>Bỏ Cuộc</button>
+              <button className="btn-ghost" onClick={openSettings}>⚙ Cài đặt</button>
             </div>
           </section>
         )}
 
         {screen === 'history' && (
-          <section className="screen active history-screen" id="historyScreen">
-            <div className="history-header">
+          <section className="screen history-screen" id="historyScreen">
+            <div className="history-top-row">
               <div>
-                <div className="history-title">⬡ Lịch Sử On-Chain</div>
-                <div className="history-subtitle">Sepolia Testnet · Smart Contract 0x4a2f...c3e1</div>
+                <div className="h-title">⬡ Lịch Sử On-Chain</div>
+                <div className="history-chain-sub">
+                  Oasis Sapphire Testnet · Smart Contract {contractConfigured ? `${CONTRACT_ADDRESS.slice(0, 8)}...${CONTRACT_ADDRESS.slice(-6)}` : 'chưa sẵn sàng'}
+                </div>
               </div>
               <button className="btn-ghost" onClick={goHome}>← Quay Lại</button>
             </div>
 
             <div className="stats-row">
-              <div className="stat-card">
-                <div className="stat-val c1">{gameHistory.length}</div>
-                <div className="stat-lbl">Ván Đã Chơi</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val c3">{totalEth.toFixed(3)}</div>
-                <div className="stat-lbl">Tổng ETH</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div>
-                <div className="stat-lbl">Win Rate X</div>
-              </div>
+              <div className="stat-card"><div className="s-val c1">{gameHistory.length}</div><div className="s-lbl">Ván Đã Chơi</div></div>
+              <div className="stat-card"><div className="s-val c3">{totalEth.toFixed(3)}</div><div className="s-lbl">Tổng ROSE</div></div>
+              <div className="stat-card"><div className="s-val c2">{gameHistory.length ? `${winRate}%` : '—'}</div><div className="s-lbl">Win Rate X</div></div>
             </div>
 
-            <div className="history-list">
+            <div className="h-list">
               {!gameHistory.length && (
                 <div className="empty-state">
                   <div className="empty-icon">📭</div>
@@ -1037,29 +2569,19 @@ function App() {
                       : `${game.mode === 'ai' ? 'AI (O)' : 'O'} THẮNG`
 
                 return (
-                  <div className="history-item" key={game.id}>
+                  <div className="h-item" key={game.id}>
                     <div className="h-num">#{gameHistory.length - idx}</div>
-                    <div className="h-info">
-                      <div className="h-players">
-                        X vs {game.mode === 'ai' ? 'AI (O) 🤖' : 'O'} · {game.gridSize}×{game.gridSize}
-                      </div>
-                      <div className="h-meta">
-                        {game.date} · {game.moves} nước đi
-                      </div>
+                    <div>
+                      <div className="h-players">X vs {game.mode === 'ai' ? 'AI (O) 🤖' : 'O'} · {game.gridSize}×{game.gridSize}</div>
+                      <div className="h-meta">{game.date} · {game.moves} nước đi</div>
                     </div>
-                    <div className="h-result">
-                      <span className={`win-badge ${badgeClass}`}>{badgeText}</span>
-                      <div className="h-score">
-                        {game.scores[0]} - {game.scores[1]}
-                      </div>
+                    <div className="h-result-wrap">
+                      <span className={`badge ${badgeClass}`}>{badgeText}</span>
+                      <div className="h-score-line">{game.scores[0]} - {game.scores[1]}</div>
                     </div>
-                    <div className="h-tx">
-                      <div className="h-tx-hash">
-                        {game.tx.slice(0, 10)}...{game.tx.slice(-6)}
-                      </div>
-                      <div className="h-amount">
-                        {game.stake > 0 ? `${game.stake.toFixed(3)} ETH` : 'Free'}
-                      </div>
+                    <div className="h-tx-wrap">
+                      <div className="h-tx-hash">{game.tx.slice(0, 10)}...{game.tx.slice(-6)}</div>
+                      <div className="h-amount">{game.stake > 0 ? `${game.stake.toFixed(3)} ROSE` : 'Free'}</div>
                     </div>
                   </div>
                 )
@@ -1070,7 +2592,7 @@ function App() {
       </div>
 
       {modalState.open && (
-        <div className="modal-overlay active">
+        <div className="modal-overlay">
           <div className="modal">
             <div className="modal-icon">{modalState.icon}</div>
             <div className="modal-title">{modalState.title}</div>
@@ -1078,7 +2600,9 @@ function App() {
             <div className="modal-tx">{modalState.tx}</div>
             <div className="modal-btns">
               <button className="btn-ghost" onClick={showHistory}>📋 Lịch Sử</button>
-              <button className="btn-primary" onClick={playAgain}>▶ Chơi Lại</button>
+              <button className="btn-primary" onClick={playAgain} disabled={rematchPending}>
+                {rematchPending ? '⏳ Đang chờ đối thủ...' : '▶ Chơi Lại'}
+              </button>
             </div>
           </div>
         </div>

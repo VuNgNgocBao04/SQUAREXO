@@ -33,6 +33,7 @@ export function createGame(rows: number, cols: number): GameState {
         rows,
         cols,
         edges,
+        boxes: [],
         currentPlayer: "X",
         score: {
             X: 0,

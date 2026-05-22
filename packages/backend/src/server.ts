@@ -1,0 +1,131 @@
+import { createServer } from "node:http";
+import { Server as IOServer } from "socket.io";
+import type { AppEnv } from "./config/env";
+import { logger } from "./config/logger";
+import { createSocketAuthMiddleware } from "./socket/authMiddleware";
+import { registerSocketHandlers } from "./socket/handler";
+import { createApp } from "./http/createApp";
+import { RoomManager } from "./room/roomManager";
+import type { JwtPayload } from "./types/auth";
+
+function buildGuestSocketUser(rawGuestId: unknown): JwtPayload | null {
+  if (typeof rawGuestId !== "string") {
+    return null;
+  }
+
+  const guestId = rawGuestId.trim();
+  if (!guestId) {
+    return null;
+  }
+
+  const safeGuest = guestId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  if (!safeGuest) {
+    return null;
+  }
+
+  return {
+    userId: `guest_${safeGuest}`,
+    username: `guest_${safeGuest}`,
+    email: `guest_${safeGuest}@squarexo.local`,
+    role: "guest",
+    tokenType: "access",
+  };
+}
+
+export type BackendServer = {
+  io: IOServer;
+  httpServer: ReturnType<typeof createServer>;
+  close: () => Promise<void>;
+};
+
+export function createBackendServer(env: AppEnv): BackendServer {
+  const { app, tokenService, matchService, blockchainService } = createApp(env);
+  const httpServer = createServer(app);
+  const io = new IOServer(httpServer, {
+    cors: {
+      origin: env.CORS_ORIGIN === "*" ? true : env.CORS_ORIGIN,
+      methods: ["GET", "POST"],
+    },
+  });
+
+  io.use((socket, next) => {
+    const rawToken = socket.handshake.auth?.token;
+    const authHeader = socket.handshake.headers.authorization;
+    let token: string | null = null;
+    if (typeof rawToken === "string" && rawToken.length > 0) {
+      token = rawToken;
+    } else if (typeof authHeader === "string") {
+      const [scheme, bearerToken] = authHeader.split(" ");
+      if (scheme === "Bearer" && bearerToken) {
+        token = bearerToken;
+      }
+    }
+
+    if (token) {
+      const socketAuthMiddleware = createSocketAuthMiddleware(tokenService);
+      socketAuthMiddleware(socket, next);
+      return;
+    }
+
+    const guestUser = buildGuestSocketUser(socket.handshake.auth?.playerId);
+    if (!guestUser) {
+      next(new Error("MISSING_TOKEN"));
+      return;
+    }
+
+    socket.data.user = guestUser;
+    next();
+  });
+
+  const roomManager = new RoomManager(env.RECONNECT_TIMEOUT_MS, env.DEDUPE_WINDOW_MS);
+  const roomSweepTimer = setInterval(() => {
+    roomManager.sweepExpired();
+  }, env.ROOM_SWEEP_INTERVAL_MS);
+  roomSweepTimer.unref();
+
+  registerSocketHandlers(io, {
+    roomManager,
+    publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${env.PORT}`,
+    matchService,
+    blockchainService,
+  });
+
+  let closed = false;
+  const close = async () => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    clearInterval(roomSweepTimer);
+    await io.close();
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => {
+        if (error && error.message !== "Server is not running.") {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  };
+
+  return {
+    io,
+    httpServer,
+    close,
+  };
+}
+
+export async function startBackendServer(env: AppEnv): Promise<BackendServer> {
+  const server = createBackendServer(env);
+
+  await new Promise<void>((resolve) => {
+    server.httpServer.listen(env.PORT, () => {
+      logger.info("backend_started", { port: env.PORT });
+      resolve();
+    });
+  });
+
+  return server;
+}
