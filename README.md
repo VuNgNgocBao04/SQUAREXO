@@ -25,6 +25,7 @@ SQUAREXO bridges traditional game mechanics with Web3 primitives—players compe
 - Smart Contract (Sapphire Testnet): [`0x2011069BBe427Fd168a65a364d9C205bCa7aa0C9`](https://explorer.oasis.io/testnet/sapphire/address/0x2011069BBe427Fd168a65a364d9C205bCa7aa0C9)
 
 ## Why Oasis
+![Alt text](Oasis_Sapphire.png)
 
 We chose the Oasis Sapphire network for on-chain settlement and wallet integrations because it combines a privacy-focused architecture with practical developer tooling and low transaction costs—an excellent fit for real-time, micro-betting games.
 
