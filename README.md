@@ -24,6 +24,19 @@ SQUAREXO bridges traditional game mechanics with Web3 primitives—players compe
 **Live deployments:**
 - Smart Contract (Sapphire Testnet): [`0x2011069BBe427Fd168a65a364d9C205bCa7aa0C9`](https://explorer.oasis.io/testnet/sapphire/address/0x2011069BBe427Fd168a65a364d9C205bCa7aa0C9)
 
+## Why Oasis
+
+We chose the Oasis Sapphire network for on-chain settlement and wallet integrations because it combines a privacy-focused architecture with practical developer tooling and low transaction costs—an excellent fit for real-time, micro-betting games.
+
+- **Privacy-first:** Oasis emphasizes privacy and confidential compute patterns that help protect sensitive game settlement data.
+- **EVM-compatible & Wallet Support:** Sapphire is compatible with EVM tooling and has growing wallet integrations, lowering the onboarding friction for players.
+- **Low fees & fast finality:** Transaction costs and confirmation times are suitable for small-stake wagers and smooth UX.
+- **Developer ecosystem:** Active tooling and an emerging community make rapid prototyping and deployment straightforward.
+
+## About
+
+SquareXO is a competitive 1v1 strategy game that extends classic Tic‑Tac‑Toe into a richer experience by combining Dots & Boxes edge-claim mechanics with optional peer-to-peer wagering. Matches can be settled on-chain via the Oasis Sapphire network while gameplay stays fast and responsive using a hybrid off-chain/real-time architecture.
+
 ## Architecture
 
 ```
@@ -563,4 +576,4 @@ MIT. See [LICENSE](./LICENSE).
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+Apache-2.0 [LICENSE](./LICENSE).
